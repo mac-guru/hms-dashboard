@@ -395,7 +395,7 @@ def api_schema_debug():
                 d.RsvDetRmCode  AS room,
                 h.RsvHdrName    AS name,
                 g.GNat          AS nat,
-                d.RsvDetPlan    AS plan,
+                d.RsvDetPlan    AS meal_plan,
                 d.RsvDetPax     AS pax,
                 d.RsvDetArrDt   AS arrival,
                 d.RsvDetDepDt   AS departure,
