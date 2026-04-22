@@ -116,7 +116,9 @@ def api_dashboard():
         """, (selected.date(), selected.date()))
         rsv = cur.fetchone() or {}
 
-        # ── In-house Guest List (one row per room, deduped) ──
+        # ── In-house Guest List (one row per room, RC rows only) ──
+        # Must filter BillCode='RC' — food/bar rows for the same room have
+        # NULL or inconsistent BillRmDepDate, which corrupts MAX() grouping.
         cur.execute("""
             SELECT
                 b.BillRmNo                                          AS room,
@@ -128,6 +130,7 @@ def api_dashboard():
             LEFT JOIN Guests g ON g.GId = b.BillGId
             WHERE b.BillCleared = 0
               AND (b.BillVoid IS NULL OR b.BillVoid = 0)
+              AND b.BillCode = 'RC'
               AND b.BillRmNo IS NOT NULL
               AND b.BillRmNo != ''
             GROUP BY b.BillRmNo
