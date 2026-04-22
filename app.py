@@ -396,6 +396,63 @@ def api_activity():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/rooms")
+@login_required
+def api_rooms():
+    """Live room status grid — always current, not date-filtered."""
+    try:
+        conn = get_db()
+        cur  = conn.cursor(as_dict=True)
+        cur.execute("""
+            SELECT
+                r.RmNo,
+                r.RmAvl,
+                (SELECT TOP 1 GName
+                 FROM Guests
+                 WHERE GRmNo = r.RmNo
+                   AND CAST(GDepDt AS DATE) >= CAST(GETDATE() AS DATE)
+                 ORDER BY GDepDt DESC) AS guest_name,
+                (SELECT MAX(CAST(BillRmDepDate AS DATE))
+                 FROM Bills
+                 WHERE BillRmNo = r.RmNo
+                   AND BillCode = 'RC'
+                   AND BillCleared = 0
+                   AND (BillVoid IS NULL OR BillVoid = 0)) AS checkout_date
+            FROM Rooms r
+            ORDER BY r.RmNo
+        """)
+        rooms = cur.fetchall()
+        conn.close()
+
+        status_map = {
+            0: ('Occupied',       'occupied'),
+            1: ('Vacant',         'vacant'),
+            2: ('Dirty',          'dirty'),
+            3: ('Out of Order',   'ooo'),
+            4: ('Inspect',        'inspect'),
+            5: ('Departure',      'departure'),
+            6: ('Out of Service', 'ooo'),
+            7: ('House Use',      'houseuse'),
+        }
+
+        result = []
+        for rm in rooms:
+            code = rm.get('RmAvl') if rm.get('RmAvl') is not None else 1
+            label, css = status_map.get(code, ('Unknown', 'vacant'))
+            chk = rm.get('checkout_date')
+            result.append({
+                'room':     str(rm['RmNo']).strip(),
+                'status':   code,
+                'label':    label,
+                'css':      css,
+                'guest':    (rm.get('guest_name') or '').strip(),
+                'checkout': chk.strftime('%b %d') if chk else '',
+            })
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route("/api/bs-to-ad")
 @login_required
 def api_bs_to_ad():

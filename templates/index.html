@@ -214,6 +214,44 @@
     .bs-go-btn:hover { background: #2c5f8a; }
     .bs-error { color: var(--red); font-size: .78rem; margin-top: 8px; min-height: 16px; }
 
+    /* ── Room Status Grid ── */
+    .room-legend-bar {
+      display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px;
+    }
+    .rl-chip {
+      padding: 4px 12px; border-radius: 20px;
+      font-size: .72rem; font-weight: 600;
+    }
+    .room-summary-bar {
+      display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px;
+    }
+    .rs-chip {
+      padding: 6px 14px; border-radius: 20px;
+      font-size: .8rem; font-weight: 700;
+    }
+    .room-grid {
+      display: grid; gap: 8px;
+      grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+    }
+    .room-card {
+      border-radius: 10px; padding: 10px 8px; text-align: center;
+      border: 2px solid transparent;
+      transition: transform .15s, box-shadow .15s;
+    }
+    .room-card:hover { transform: translateY(-2px); box-shadow: 0 4px 14px rgba(0,0,0,.12); }
+    .rm-no     { font-size: 1.45rem; font-weight: 800; line-height: 1; }
+    .rm-status { font-size: .6rem; font-weight: 700; text-transform: uppercase; letter-spacing: .6px; margin-top: 3px; }
+    .rm-guest  { font-size: .65rem; margin-top: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .rm-dep    { font-size: .6rem; margin-top: 1px; opacity: .75; }
+
+    .rm-occupied  { background: #dbeafe; border-color: #1a3c5e; color: #1a3c5e; }
+    .rm-vacant    { background: #dcfce7; border-color: #27ae60; color: #27ae60; }
+    .rm-dirty     { background: #fef9c3; border-color: #d97706; color: #92400e; }
+    .rm-ooo       { background: #fee2e2; border-color: #e74c3c; color: #c0392b; }
+    .rm-inspect   { background: #f3e8ff; border-color: #7b5ea7; color: #5b21b6; }
+    .rm-departure { background: #ccfbf1; border-color: #0d9488; color: #0f766e; }
+    .rm-houseuse  { background: #f1f5f9; border-color: #94a3b8; color: #475569; }
+
     /* ── Responsive ── */
     @media (max-width: 700px) { .hide-sm { display: none; } }
     @media (max-width: 480px) {
@@ -226,6 +264,8 @@
       #date-display { min-width: 140px; }
       #date-en { font-size: .82rem; }
       .bs-popup { left: auto; right: 0; transform: none; }
+      .room-grid { grid-template-columns: repeat(3, 1fr); }
+      .rm-no { font-size: 1.2rem; }
     }
   </style>
 </head>
@@ -269,6 +309,7 @@
 <div class="tabs">
   <button class="tab-btn active" onclick="switchTab('occupancy', this)">📊 Occupancy</button>
   <button class="tab-btn" onclick="switchTab('revenue', this)">💰 Revenue</button>
+  <button class="tab-btn" onclick="switchTab('rooms', this)">🏠 Rooms</button>
 </div>
 
 <div id="error-msg"></div>
@@ -343,6 +384,26 @@
     <div class="footer" id="rev-updated"></div>
   </div>
 
+  <!-- Rooms Tab -->
+  <div class="tab-content" id="tab-rooms">
+    <!-- Legend -->
+    <div class="room-legend-bar">
+      <span class="rl-chip rm-occupied">Occupied</span>
+      <span class="rl-chip rm-departure">Departure</span>
+      <span class="rl-chip rm-vacant">Vacant</span>
+      <span class="rl-chip rm-dirty">Dirty</span>
+      <span class="rl-chip rm-inspect">Inspect</span>
+      <span class="rl-chip rm-ooo">Out of Order</span>
+      <span class="rl-chip rm-houseuse">House Use</span>
+    </div>
+    <!-- Summary counts -->
+    <div class="room-summary-bar" id="rooms-summary-bar"></div>
+    <!-- Loading -->
+    <div id="rooms-loading-msg" style="text-align:center;padding:30px;color:var(--muted)">Loading rooms…</div>
+    <!-- Grid -->
+    <div class="room-grid" id="room-grid"></div>
+    <div class="footer" id="rooms-updated"></div>
+  </div>
 
 </main>
 
@@ -355,6 +416,7 @@ function switchTab(name, btn) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
   document.getElementById('tab-' + name).classList.add('active');
   btn.classList.add('active');
+  if (name === 'rooms') loadRooms();
 }
 
 // ── Date helpers ───────────────────────────────────────
@@ -578,9 +640,68 @@ function renderDashboard(d) {
   document.getElementById('main-content').style.display = 'block';
 }
 
+// ── Rooms tab ──────────────────────────────────────────
+async function loadRooms() {
+  document.getElementById('rooms-loading-msg').style.display = 'block';
+  document.getElementById('room-grid').innerHTML = '';
+  document.getElementById('rooms-summary-bar').innerHTML = '';
+  try {
+    const res  = await fetch('/api/rooms');
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    renderRooms(data);
+  } catch(e) {
+    document.getElementById('rooms-loading-msg').textContent = '⚠️ ' + e.message;
+  }
+}
+
+function renderRooms(rooms) {
+  // Count by status
+  const counts = {};
+  rooms.forEach(r => { counts[r.css] = (counts[r.css] || 0) + 1; });
+
+  const summaryOrder = [
+    { key: 'occupied',  label: 'Occupied'  },
+    { key: 'departure', label: 'Departure' },
+    { key: 'dirty',     label: 'Dirty'     },
+    { key: 'inspect',   label: 'Inspect'   },
+    { key: 'vacant',    label: 'Vacant'    },
+    { key: 'ooo',       label: 'OOO'       },
+    { key: 'houseuse',  label: 'House Use' },
+  ];
+  document.getElementById('rooms-summary-bar').innerHTML = summaryOrder
+    .map(s => {
+      const cnt = counts[s.key] || 0;
+      if (!cnt) return '';
+      return `<span class="rs-chip rm-${s.key}">${cnt} ${s.label}</span>`;
+    }).filter(Boolean).join('');
+
+  // Room cards
+  document.getElementById('room-grid').innerHTML = rooms.map(r => {
+    const gHtml = r.guest
+      ? `<div class="rm-guest" title="${r.guest}">${r.guest}</div>`
+      : '';
+    const dHtml = r.checkout && (r.css === 'occupied' || r.css === 'departure')
+      ? `<div class="rm-dep">↩ ${r.checkout}</div>`
+      : '';
+    return `<div class="room-card rm-${r.css}">
+      <div class="rm-status">${r.label}</div>
+      <div class="rm-no">${r.room}</div>
+      ${gHtml}${dHtml}
+    </div>`;
+  }).join('');
+
+  document.getElementById('rooms-loading-msg').style.display = 'none';
+  document.getElementById('rooms-updated').textContent =
+    `Live · Last updated: ${new Date().toLocaleTimeString()} — auto-refreshes every 2 min`;
+}
+
 // ── Auto-refresh ───────────────────────────────────────
 loadData();
 setInterval(() => { if (!currentDate) loadData(); }, 300000);
+setInterval(() => {
+  if (document.getElementById('tab-rooms').classList.contains('active')) loadRooms();
+}, 120000);
 </script>
 </body>
 </html>
