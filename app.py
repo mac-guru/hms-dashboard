@@ -385,37 +385,31 @@ def api_dashboard():
 @app.route("/api/schema-debug")
 @login_required
 def api_schema_debug():
-    """Temporary: sample live in-house data from FRSVDet/FRSVHDR/Guests."""
+    """Temporary: sample live in-house data using Guests as base table."""
     try:
-        conn  = get_db()
-        cur   = conn.cursor(as_dict=True)
-        today = datetime.now().date()
+        conn = get_db()
+        cur  = conn.cursor(as_dict=True)
         cur.execute("""
             SELECT
-                d.RsvDetRmCode  AS room,
-                h.RsvHdrName    AS name,
-                g.GNat          AS nat,
-                d.RsvDetPlan    AS meal_plan,
-                d.RsvDetPax     AS pax,
-                d.RsvDetArrDt   AS arrival,
-                d.RsvDetDepDt   AS departure,
-                d.RsvDetStat    AS stat,
-                h.RsvHdrAgt     AS agt,
-                h.RsvHdrSrc     AS src,
-                h.RsvHdrThru    AS thru,
-                h.RsvHdrTurnBy  AS turn_by,
-                h.RsvHdrRqBy    AS rq_by,
-                g.GPpNo         AS passport,
-                g.GIdentity     AS id_card,
-                g.GSeq          AS g_seq
-            FROM FRSVDet d
-            JOIN FRSVHDR h ON h.RsvHdrId = d.RsvDetHdrId
-            LEFT JOIN Guests g ON g.GRsvId = d.RsvDetId AND g.GSeq = 1
-            WHERE d.RsvDetStat = 'open'
-              AND CAST(d.RsvDetArrDt AS DATE) <= %s
-              AND CAST(d.RsvDetDepDt AS DATE) >= %s
-            ORDER BY d.RsvDetRmCode
-        """, (today, today))
+                g.GRmNo      AS room,
+                g.GName      AS name,
+                g.GNat       AS nat,
+                g.GArrDt     AS arrival,
+                g.GDepDt     AS departure,
+                g.GPpNo      AS passport,
+                g.GIdentity  AS id_card,
+                g.GSeq       AS g_seq,
+                g.GGone      AS gone,
+                h.RsvHdrRqBy AS checked_in_by,
+                h.RsvHdrAgt  AS bill_to_full,
+                h.RsvHdrName AS hdr_name
+            FROM Guests g
+            LEFT JOIN FRSVHDR h ON h.RsvHdrId = g.GRsvHdrId
+            WHERE (g.GGone = 0 OR g.GGone IS NULL)
+              AND g.GRmNo IS NOT NULL
+              AND g.GRmNo != ''
+            ORDER BY g.GRmNo, g.GSeq
+        """)
         rows = cur.fetchall()
         conn.close()
         for row in rows:
