@@ -143,7 +143,12 @@ def api_dashboard():
                     1
                 ) AS pax,
                 CAST(g.GArrDt AS DATE) AS arrival,
-                CAST(g.GDepDt AS DATE) AS departure,
+                -- Use FRSVDet departure (updated on extensions); fall back to Guests.GDepDt
+                CAST(ISNULL(
+                    (SELECT TOP 1 CAST(RsvDetDepDt AS DATE) FROM FRSVDet
+                     WHERE RsvDetHdrId = g.GRsvHdrId AND RsvDetStat = 'open'),
+                    g.GDepDt
+                ) AS DATE) AS departure,
                 LTRIM(RTRIM(ISNULL(h.RsvHdrRqBy, ''))) AS checked_in_by,
                 LTRIM(RTRIM(ISNULL(h.RsvHdrAgt, '')))  AS bill_to_full
             FROM Guests g
