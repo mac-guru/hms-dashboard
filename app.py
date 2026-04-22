@@ -402,24 +402,53 @@ def api_activity():
 @app.route("/api/debug-cash")
 @login_required
 def api_debug_cash():
-    """Temp: show today ACR + PMT broken down by BillPmode to find correct filter."""
+    """Temp: query GLTRAN for cash account 100002 today + all pmode=2 bills today."""
     try:
         conn = pymssql.connect(**DB)
         cur  = conn.cursor(as_dict=True)
+
+        # GLTRAN_DETL columns
+        cur.execute("""
+            SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_NAME = 'GLTRAN_DETL' ORDER BY ORDINAL_POSITION
+        """)
+        gltran_cols = [r['COLUMN_NAME'] for r in cur.fetchall()]
+
+        # GLTRAN_MAST columns
+        cur.execute("""
+            SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_NAME = 'GLTRAN_MAST' ORDER BY ORDINAL_POSITION
+        """)
+        gltranm_cols = [r['COLUMN_NAME'] for r in cur.fetchall()]
+
+        # Top 5 GLTRAN_DETL rows (to understand structure)
+        cur.execute("SELECT TOP 5 * FROM GLTRAN_DETL ORDER BY 1 DESC")
+        gltran_sample = cur.fetchall()
+
+        # Top 5 GLTRAN_MAST rows
+        cur.execute("SELECT TOP 5 * FROM GLTRAN_MAST ORDER BY 1 DESC")
+        gltranm_sample = cur.fetchall()
+
+        # All Bills for today grouped by BillPmode (all codes)
         cur.execute("""
             SELECT BillCode, BillPmode,
-                   SUM(ISNULL(BillTot,0)) AS total,
-                   COUNT(*) AS cnt
+                   SUM(ISNULL(BillTot,0)) AS total, COUNT(*) AS cnt
             FROM Bills
             WHERE CAST(BillDt AS DATE) = CAST(GETDATE() AS DATE)
               AND (BillVoid IS NULL OR BillVoid = 0)
-              AND BillCode IN ('ACR','PMT','MB','CR')
             GROUP BY BillCode, BillPmode
-            ORDER BY BillCode, BillPmode
+            ORDER BY total DESC
         """)
-        rows = cur.fetchall()
+        all_pmode = cur.fetchall()
+
         conn.close()
-        return jsonify(rows)
+        return jsonify({
+            "gltran_detl_cols":   gltran_cols,
+            "gltran_mast_cols":   gltranm_cols,
+            "gltran_detl_sample": gltran_sample,
+            "gltran_mast_sample": gltranm_sample,
+            "all_pmode_today":    all_pmode,
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
