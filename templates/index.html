@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Himalayan Suite — Live Dashboard</title>
+  <title>Himalayan Suite Hotel — Dashboard</title>
   <link rel="manifest" href="/static/manifest.json"/>
   <meta name="apple-mobile-web-app-capable" content="yes"/>
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
@@ -12,162 +12,310 @@
   <meta name="theme-color" content="#1a3c5e"/>
   <style>
     :root {
-      --primary: #1a3c5e;
-      --accent:  #e8a020;
-      --green:   #27ae60;
-      --red:     #e74c3c;
-      --bg:      #f0f4f8;
-      --card:    #ffffff;
-      --text:    #2c3e50;
-      --muted:   #7f8c8d;
+      --primary:  #1a3c5e;
+      --accent:   #e8a020;
+      --green:    #27ae60;
+      --red:      #e74c3c;
+      --purple:   #7b5ea7;
+      --bg:       #f0f4f8;
+      --card:     #ffffff;
+      --text:     #2c3e50;
+      --muted:    #7f8c8d;
+      --border:   #e0e8f0;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); }
+    body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
 
+    /* ── Header ── */
     header {
       background: linear-gradient(135deg, var(--primary), #2c5f8a);
-      color: white; padding: 16px 28px;
+      color: white; padding: 16px 20px;
       display: flex; align-items: center; justify-content: space-between;
-      box-shadow: 0 2px 8px rgba(0,0,0,.25);
+      box-shadow: 0 2px 10px rgba(0,0,0,.2);
+      position: sticky; top: 0; z-index: 100;
     }
-    header h1 { font-size: 1.4rem; font-weight: 700; letter-spacing: .5px; }
-    header h1 span { color: var(--accent); }
-    #date-label { font-size: .85rem; opacity: .85; }
-    .header-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .header-left h1 { font-size: 1.2rem; font-weight: 700; letter-spacing: .3px; }
+    .header-left h1 span { color: var(--accent); }
+    .header-left .subtitle { font-size: .75rem; opacity: .75; margin-top: 2px; }
+    .logout-btn {
+      background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.3);
+      color: white; padding: 7px 14px; border-radius: 20px;
+      font-size: .8rem; cursor: pointer; transition: .2s; text-decoration: none;
+    }
+    .logout-btn:hover { background: rgba(255,255,255,.25); }
+
+    /* ── Date Bar ── */
+    .date-bar {
+      background: var(--card); border-bottom: 1px solid var(--border);
+      padding: 10px 20px; display: flex; align-items: center;
+      justify-content: center; gap: 10px; flex-wrap: wrap;
+    }
+    .date-nav-btn {
+      background: var(--primary); color: white; border: none;
+      width: 34px; height: 34px; border-radius: 50%;
+      font-size: 1rem; cursor: pointer; transition: .2s;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .date-nav-btn:hover { background: #2c5f8a; }
+    .date-nav-btn:disabled { opacity: .4; cursor: not-allowed; }
+    #date-display {
+      font-weight: 600; font-size: .9rem; color: var(--primary);
+      min-width: 180px; text-align: center;
+    }
     #date-picker {
-      padding: 7px 12px; border-radius: 20px; border: none;
-      font-size: .85rem; color: var(--text); cursor: pointer;
-      background: rgba(255,255,255,.92);
+      padding: 7px 12px; border-radius: 8px;
+      border: 1.5px solid var(--border); font-size: .85rem;
+      color: var(--text); cursor: pointer; outline: none;
     }
-    #refresh-btn, #go-btn {
-      background: var(--accent); border: none; color: white;
-      padding: 8px 18px; border-radius: 20px; cursor: pointer;
-      font-size: .85rem; font-weight: 600; transition: .2s;
+    #date-picker:focus { border-color: var(--primary); }
+    .today-btn {
+      background: var(--green); color: white; border: none;
+      padding: 7px 16px; border-radius: 20px;
+      font-size: .82rem; font-weight: 600; cursor: pointer; transition: .2s;
     }
-    #go-btn { background: #27ae60; }
-    #go-btn:hover { background: #219a52; }
-    #refresh-btn:hover { background: #d4901c; }
-    #refresh-btn:disabled, #go-btn:disabled { opacity: .6; cursor: not-allowed; }
-    #today-btn {
-      background: rgba(255,255,255,.2); border: 1px solid rgba(255,255,255,.4);
-      color: white; padding: 7px 14px; border-radius: 20px; cursor: pointer;
-      font-size: .82rem; transition: .2s;
-    }
-    #today-btn:hover { background: rgba(255,255,255,.3); }
+    .today-btn:hover { background: #219a52; }
 
-    main { padding: 20px 24px; max-width: 900px; margin: 0 auto; }
+    /* ── Tabs ── */
+    .tabs {
+      display: flex; background: var(--card);
+      border-bottom: 2px solid var(--border);
+      padding: 0 20px;
+    }
+    .tab-btn {
+      padding: 14px 24px; font-size: .9rem; font-weight: 600;
+      color: var(--muted); border: none; background: none;
+      cursor: pointer; border-bottom: 3px solid transparent;
+      margin-bottom: -2px; transition: .2s;
+    }
+    .tab-btn.active { color: var(--primary); border-bottom-color: var(--primary); }
+    .tab-btn:hover:not(.active) { color: var(--text); }
 
+    /* ── Main Content ── */
+    main { padding: 20px; max-width: 860px; margin: 0 auto; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    /* ── Loading / Error ── */
     #loading {
       display: flex; align-items: center; justify-content: center;
-      height: 60vh; flex-direction: column; gap: 16px; color: var(--muted);
+      height: 50vh; flex-direction: column; gap: 16px; color: var(--muted);
     }
     .spinner {
-      width: 48px; height: 48px; border: 5px solid #ddd;
+      width: 44px; height: 44px; border: 4px solid #ddd;
       border-top-color: var(--primary); border-radius: 50%;
       animation: spin .8s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
-
-    .section-title {
-      font-size: 1rem; font-weight: 700; color: var(--primary);
-      margin: 24px 0 12px; text-transform: uppercase;
-      letter-spacing: .8px; display: flex; align-items: center; gap: 8px;
+    #error-msg {
+      display: none; background: #fdf0ee; border: 1px solid var(--red);
+      border-radius: 10px; padding: 14px 18px; color: var(--red);
+      margin-bottom: 16px; font-size: .88rem;
     }
-    .section-title::after { content: ''; flex: 1; height: 2px; background: #e0e8f0; }
 
+    /* ── Section Title ── */
+    .section-title {
+      font-size: .78rem; font-weight: 700; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 1px;
+      margin: 20px 0 10px;
+    }
+
+    /* ── Stat Cards ── */
+    .cards-grid {
+      display: grid; gap: 12px;
+      grid-template-columns: repeat(2, 1fr);
+    }
+    .stat-card {
+      background: var(--card); border-radius: 14px;
+      padding: 16px 18px; box-shadow: 0 2px 8px rgba(0,0,0,.06);
+      border-top: 4px solid var(--primary);
+    }
+    .stat-card.green  { border-top-color: var(--green); }
+    .stat-card.orange { border-top-color: var(--accent); }
+    .stat-card.purple { border-top-color: var(--purple); }
+    .stat-card.blue   { border-top-color: #2980b9; }
+    .stat-label { font-size: .72rem; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+    .stat-value { font-size: 2rem; font-weight: 700; color: var(--text); line-height: 1.1; margin: 6px 0 4px; }
+    .stat-sub   { font-size: .78rem; color: var(--muted); }
+    .occ-bar-wrap { background: #e8f0f8; border-radius: 6px; height: 6px; margin-top: 10px; overflow: hidden; }
+    .occ-bar { height: 100%; border-radius: 6px; background: linear-gradient(90deg, var(--primary), #2c7abf); }
+    .occ-bar.green  { background: linear-gradient(90deg, var(--green), #2ecc71); }
+    .occ-bar.orange { background: linear-gradient(90deg, var(--accent), #f39c12); }
+    .occ-bar.purple { background: linear-gradient(90deg, var(--purple), #a07cc5); }
+
+    /* ── Revenue Table ── */
     .table-card {
-      background: var(--card); border-radius: 12px;
-      box-shadow: 0 2px 8px rgba(0,0,0,.07); overflow: hidden;
+      background: var(--card); border-radius: 14px;
+      box-shadow: 0 2px 8px rgba(0,0,0,.06); overflow: hidden;
     }
     table { width: 100%; border-collapse: collapse; font-size: .88rem; }
     th {
-      background: var(--primary); color: white; padding: 11px 14px;
-      text-align: left; font-weight: 600; font-size: .8rem;
-      text-transform: uppercase; letter-spacing: .5px;
+      background: var(--primary); color: white;
+      padding: 12px 16px; text-align: left;
+      font-size: .75rem; text-transform: uppercase; letter-spacing: .5px;
     }
     th.right, td.right { text-align: right; }
-    td { padding: 10px 14px; border-bottom: 1px solid #f0f0f0; }
+    td { padding: 11px 16px; border-bottom: 1px solid #f0f0f0; }
     tr:last-child td { border-bottom: none; font-weight: 700; background: #f7f9fc; }
-    tr:hover td { background: #f5f8ff; }
-    tr.subtotal td { background: #eef4fb; font-weight: 600; font-style: italic; color: var(--primary); border-top: 1px solid #c8d8eb; border-bottom: 1px solid #c8d8eb; }
-    .badge-up   { background: #eafaf1; color: var(--green); padding: 2px 8px; border-radius: 20px; font-size: .78rem; font-weight: 600; }
-    .badge-down { background: #fdf0ee; color: var(--red);   padding: 2px 8px; border-radius: 20px; font-size: .78rem; font-weight: 600; }
-
-    .cards-row { display: grid; gap: 14px; }
-    .cards-4   { grid-template-columns: repeat(4, 1fr); }
-    .card.purple { border-color: #7b5ea7; }
-    .card {
-      background: var(--card); border-radius: 12px; padding: 18px 20px;
-      box-shadow: 0 2px 8px rgba(0,0,0,.07);
-      border-left: 4px solid var(--primary);
+    tr:hover:not(:last-child) td { background: #f5f8ff; }
+    tr.subtotal td {
+      background: #eef4fb; font-weight: 600; font-style: italic;
+      color: var(--primary); border-top: 1px solid #c8d8eb;
+      border-bottom: 1px solid #c8d8eb;
     }
-    .card.green  { border-color: var(--green); }
-    .card.orange { border-color: var(--accent); }
-    .card-label { font-size: .75rem; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
-    .card-value { font-size: 1.8rem; font-weight: 700; color: var(--text); line-height: 1.2; margin-top: 4px; }
-    .card-sub   { font-size: .8rem; color: var(--muted); margin-top: 4px; }
-    .occ-bar-wrap { background: #e8f0f8; border-radius: 8px; height: 10px; margin-top: 10px; overflow: hidden; }
-    .occ-bar { height: 100%; border-radius: 8px; background: linear-gradient(90deg, var(--primary), #2c7abf); }
+    .badge-up   { background: #eafaf1; color: var(--green); padding: 3px 8px; border-radius: 20px; font-size: .76rem; font-weight: 600; }
+    .badge-down { background: #fdf0ee; color: var(--red);   padding: 3px 8px; border-radius: 20px; font-size: .76rem; font-weight: 600; }
 
-    #error-msg {
-      display: none; background: #fdf0ee; border: 1px solid var(--red);
-      border-radius: 8px; padding: 14px 18px; color: var(--red);
-      margin-bottom: 16px; font-size: .9rem;
-    }
+    /* ── Footer ── */
+    .footer { text-align: center; color: var(--muted); font-size: .74rem; margin: 24px 0 12px; }
 
-    @media (max-width: 600px) {
-      header h1 { font-size: 1rem; }
-      table { font-size: .78rem; }
-      td, th { padding: 8px 10px; }
+    /* ── Responsive ── */
+    @media (max-width: 480px) {
+      .header-left h1 { font-size: 1rem; }
+      .tab-btn { padding: 12px 16px; font-size: .82rem; }
+      .stat-value { font-size: 1.6rem; }
+      th, td { padding: 9px 10px; }
+      table { font-size: .8rem; }
+      #date-display { min-width: 140px; font-size: .82rem; }
     }
   </style>
 </head>
 <body>
 
 <header>
-  <div>
-    <h1>🏨 <span>Himalayan Suite</span> — Dashboard</h1>
-    <div id="date-label">Loading…</div>
+  <div class="header-left">
+    <h1>🏨 <span>Himalayan Suite</span> Hotel</h1>
+    <div class="subtitle">Live Hotel Dashboard</div>
   </div>
-  <div class="header-controls">
-    <input type="date" id="date-picker" title="Select date"/>
-    <button id="go-btn" onclick="loadByDate()">📅 View</button>
-    <button id="today-btn" onclick="goToday()">Today</button>
-    <button id="refresh-btn" onclick="loadData()">⟳ Refresh</button>
-  </div>
+  <a href="/logout" class="logout-btn">Sign Out</a>
 </header>
 
-<main>
-  <div id="error-msg"></div>
-  <div id="loading"><div class="spinner"></div><div>Fetching hotel data…</div></div>
-  <div id="content" style="display:none"></div>
+<div class="date-bar">
+  <button class="date-nav-btn" id="prev-btn" onclick="goDate(-1)" title="Previous day">&#8592;</button>
+  <div id="date-display">Loading…</div>
+  <button class="date-nav-btn" id="next-btn" onclick="goDate(1)" title="Next day">&#8594;</button>
+  <input type="date" id="date-picker" onchange="loadByDate()"/>
+  <button class="today-btn" onclick="goToday()">Today</button>
+</div>
+
+<div class="tabs">
+  <button class="tab-btn active" onclick="switchTab('occupancy', this)">📊 Occupancy</button>
+  <button class="tab-btn" onclick="switchTab('revenue', this)">💰 Revenue</button>
+</div>
+
+<div id="error-msg"></div>
+<div id="loading"><div class="spinner"></div><div>Fetching hotel data…</div></div>
+
+<main id="main-content" style="display:none">
+
+  <!-- Occupancy Tab -->
+  <div class="tab-content active" id="tab-occupancy">
+    <div class="section-title" id="occ-label-today">Today</div>
+    <div class="cards-grid">
+      <div class="stat-card green">
+        <div class="stat-label" id="lbl-today">Today</div>
+        <div class="stat-value" id="occ-today-pct">—</div>
+        <div class="stat-sub" id="occ-today-sub">—</div>
+        <div class="occ-bar-wrap"><div class="occ-bar green" id="bar-today"></div></div>
+      </div>
+      <div class="stat-card blue">
+        <div class="stat-label" id="lbl-yest">Yesterday</div>
+        <div class="stat-value" id="occ-yest-pct">—</div>
+        <div class="stat-sub" id="occ-yest-sub">—</div>
+        <div class="occ-bar-wrap"><div class="occ-bar" id="bar-yest"></div></div>
+      </div>
+      <div class="stat-card orange">
+        <div class="stat-label">This Month</div>
+        <div class="stat-value" id="occ-mtd-pct">—</div>
+        <div class="stat-sub" id="occ-mtd-sub">—</div>
+        <div class="occ-bar-wrap"><div class="occ-bar orange" id="bar-mtd"></div></div>
+      </div>
+      <div class="stat-card purple">
+        <div class="stat-label">Fiscal Year</div>
+        <div class="stat-value" id="occ-fy-pct">—</div>
+        <div class="stat-sub" id="occ-fy-sub">—</div>
+        <div class="occ-bar-wrap"><div class="occ-bar purple" id="bar-fy"></div></div>
+      </div>
+    </div>
+    <div class="footer" id="occ-updated"></div>
+  </div>
+
+  <!-- Revenue Tab -->
+  <div class="tab-content" id="tab-revenue">
+    <div class="section-title" id="rev-section-label">Revenue</div>
+    <div class="table-card">
+      <table>
+        <thead>
+          <tr>
+            <th>Category</th>
+            <th class="right" id="rev-col-today">Today</th>
+            <th class="right" id="rev-col-yest">Yesterday</th>
+            <th class="right">Change</th>
+          </tr>
+        </thead>
+        <tbody id="revenue-body"></tbody>
+      </table>
+    </div>
+    <div class="footer" id="rev-updated"></div>
+  </div>
+
 </main>
 
 <script>
 let currentDate = null;
 
-document.addEventListener('DOMContentLoaded', () => {
-  const today = new Date().toISOString().split('T')[0];
-  const picker = document.getElementById('date-picker');
-  picker.max = today;
-  picker.value = today;
-});
-
-function setAllBtnsDisabled(disabled) {
-  ['refresh-btn','go-btn','today-btn'].forEach(id => {
-    document.getElementById(id).disabled = disabled;
-  });
+// ── Tab switching ──────────────────────────────────────
+function switchTab(name, btn) {
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  btn.classList.add('active');
 }
 
+// ── Date helpers ───────────────────────────────────────
+function getToday() { return new Date().toISOString().split('T')[0]; }
+
+function formatDisplay(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  return d.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric', year:'numeric' });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const picker = document.getElementById('date-picker');
+  picker.max = getToday();
+  picker.value = getToday();
+  loadData();
+});
+
+function goDate(delta) {
+  const picker = document.getElementById('date-picker');
+  const d = new Date(picker.value + 'T00:00:00');
+  d.setDate(d.getDate() + delta);
+  const str = d.toISOString().split('T')[0];
+  if (str > getToday()) return;
+  picker.value = str;
+  currentDate = str === getToday() ? null : str;
+  loadData(currentDate);
+}
+
+function loadByDate() {
+  const val = document.getElementById('date-picker').value;
+  currentDate = val === getToday() ? null : val;
+  loadData(currentDate);
+}
+
+function goToday() {
+  currentDate = null;
+  document.getElementById('date-picker').value = getToday();
+  loadData();
+}
+
+// ── Data loading ───────────────────────────────────────
 async function loadData(dateStr) {
-  setAllBtnsDisabled(true);
-  document.getElementById('refresh-btn').textContent = '⟳ Loading…';
   document.getElementById('loading').style.display = 'flex';
-  document.getElementById('content').style.display = 'none';
+  document.getElementById('main-content').style.display = 'none';
   document.getElementById('error-msg').style.display = 'none';
 
   const url = dateStr ? `/api/dashboard?date=${dateStr}` : '/api/dashboard';
-
   try {
     const res  = await fetch(url);
     const data = await res.json();
@@ -175,112 +323,82 @@ async function loadData(dateStr) {
     renderDashboard(data);
   } catch(e) {
     document.getElementById('error-msg').style.display = 'block';
-    document.getElementById('error-msg').textContent = '⚠️ Error: ' + e.message;
+    document.getElementById('error-msg').textContent = '⚠️ ' + e.message;
     document.getElementById('loading').style.display = 'none';
   }
-
-  setAllBtnsDisabled(false);
-  document.getElementById('refresh-btn').textContent = '⟳ Refresh';
 }
 
-function loadByDate() {
-  const val = document.getElementById('date-picker').value;
-  if (!val) { loadData(); return; }
-  currentDate = val;
-  loadData(val);
-}
-
-function goToday() {
-  currentDate = null;
-  const today = new Date().toISOString().split('T')[0];
-  document.getElementById('date-picker').value = today;
-  loadData();
-}
-
-function fmt(n, decimals=0) {
+// ── Formatting ─────────────────────────────────────────
+function fmt(n, dec=0) {
   if (!n && n !== 0) return '—';
-  return Number(n).toLocaleString('en-IN', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+  return Number(n).toLocaleString('en-IN', { minimumFractionDigits: dec, maximumFractionDigits: dec });
 }
 
-function changeBadge(val) {
-  if (val > 0)  return `<span class="badge-up">▲ ${fmt(val)}</span>`;
-  if (val < 0)  return `<span class="badge-down">▼ ${fmt(Math.abs(val))}</span>`;
-  return `<span style="color:#aaa">—</span>`;
+function badge(val) {
+  if (val > 0) return `<span class="badge-up">▲ ${fmt(val)}</span>`;
+  if (val < 0) return `<span class="badge-down">▼ ${fmt(Math.abs(val))}</span>`;
+  return `<span style="color:#bbb">—</span>`;
 }
 
+// ── Render ─────────────────────────────────────────────
 function renderDashboard(d) {
-  const labelSel  = d.is_today ? 'Today'     : d.today_str;
-  const labelPrev = d.is_today ? 'Yesterday' : d.prev_str;
-  document.getElementById('date-label').textContent =
-    d.is_today ? `📅 ${d.date}` : `📅 Viewing: ${d.date}`;
-
+  const isToday  = d.is_today;
+  const labelSel = isToday ? 'Today'     : d.today_str;
+  const labelPrv = isToday ? 'Yesterday' : d.prev_str;
   const o = d.occupancy, r = d.rooms;
-  let html = '';
 
-  // ── Occupancy ─────────────────────────────────────────
-  html += `<div class="section-title">📊 Occupancy</div>
-  <div class="cards-row cards-4">
-    <div class="card green">
-      <div class="card-label">Occupancy — ${labelSel}</div>
-      <div class="card-value">${o.today_pct}%</div>
-      <div class="card-sub">${o.today} / ${r.total} rooms &nbsp;·&nbsp; ${fmt(o.today_pax)} pax</div>
-      <div class="occ-bar-wrap"><div class="occ-bar" style="width:${o.today_pct}%"></div></div>
-    </div>
-    <div class="card">
-      <div class="card-label">Occupancy — ${labelPrev}</div>
-      <div class="card-value">${o.yest_pct}%</div>
-      <div class="card-sub">${o.yesterday} / ${r.total} rooms &nbsp;·&nbsp; ${fmt(o.yest_pax)} pax</div>
-      <div class="occ-bar-wrap"><div class="occ-bar" style="width:${o.yest_pct}%"></div></div>
-    </div>
-    <div class="card orange">
-      <div class="card-label">This Month (MTD)</div>
-      <div class="card-value">${o.mtd_pct}%</div>
-      <div class="card-sub">${fmt(o.mtd_rooms)} / ${fmt(o.mtd_avail)} room-nights</div>
-      <div class="occ-bar-wrap"><div class="occ-bar" style="width:${o.mtd_pct}%"></div></div>
-    </div>
-    <div class="card purple">
-      <div class="card-label">Fiscal Year (Jul 17 '25)</div>
-      <div class="card-value">${o.fy_pct}%</div>
-      <div class="card-sub">${fmt(o.fy_rooms)} / ${fmt(o.fy_avail)} room-nights</div>
-      <div class="occ-bar-wrap"><div class="occ-bar" style="width:${o.fy_pct}%;background:linear-gradient(90deg,#7b5ea7,#a07cc5)"></div></div>
-    </div>
-  </div>`;
+  // Date bar
+  document.getElementById('date-display').textContent = d.date;
+  const picker = document.getElementById('date-picker');
+  document.getElementById('next-btn').disabled = picker.value >= new Date().toISOString().split('T')[0];
 
-  // ── Revenue ────────────────────────────────────────────
-  html += `<div class="section-title">💰 Revenue — ${labelSel} vs ${labelPrev}</div>
-  <div class="table-card">
-    <table>
-      <thead>
-        <tr>
-          <th>Category</th>
-          <th class="right">${labelSel}</th>
-          <th class="right">${labelPrev}</th>
-          <th class="right">Change</th>
-        </tr>
-      </thead>
-      <tbody>`;
+  // ── Occupancy tab ──
+  document.getElementById('lbl-today').textContent = labelSel;
+  document.getElementById('lbl-yest').textContent  = labelPrv;
 
+  document.getElementById('occ-today-pct').textContent = o.today_pct + '%';
+  document.getElementById('occ-today-sub').textContent  = `${o.today} / ${r.total} rooms · ${fmt(o.today_pax)} pax`;
+  document.getElementById('bar-today').style.width = o.today_pct + '%';
+
+  document.getElementById('occ-yest-pct').textContent = o.yest_pct + '%';
+  document.getElementById('occ-yest-sub').textContent  = `${o.yesterday} / ${r.total} rooms · ${fmt(o.yest_pax)} pax`;
+  document.getElementById('bar-yest').style.width = o.yest_pct + '%';
+
+  document.getElementById('occ-mtd-pct').textContent = o.mtd_pct + '%';
+  document.getElementById('occ-mtd-sub').textContent  = `${fmt(o.mtd_rooms)} / ${fmt(o.mtd_avail)} room-nights`;
+  document.getElementById('bar-mtd').style.width = o.mtd_pct + '%';
+
+  document.getElementById('occ-fy-pct').textContent = o.fy_pct + '%';
+  document.getElementById('occ-fy-sub').textContent  = `${fmt(o.fy_rooms)} / ${fmt(o.fy_avail)} room-nights`;
+  document.getElementById('bar-fy').style.width = o.fy_pct + '%';
+
+  const updTime = new Date().toLocaleTimeString();
+  const updNote = isToday ? `Last updated: ${updTime} — auto-refreshes every 5 min` : `Historical view · ${d.date}`;
+  document.getElementById('occ-updated').textContent = updNote;
+
+  // ── Revenue tab ──
+  document.getElementById('rev-section-label').textContent = `Revenue — ${labelSel} vs ${labelPrv}`;
+  document.getElementById('rev-col-today').textContent = labelSel;
+  document.getElementById('rev-col-yest').textContent  = labelPrv;
+
+  let rows = '';
   for (const row of d.revenue) {
     const cls = row.subtotal ? ' class="subtotal"' : '';
-    html += `<tr${cls}>
+    rows += `<tr${cls}>
       <td>${row.label}</td>
       <td class="right">NPR ${fmt(row.today, 2)}</td>
       <td class="right">NPR ${fmt(row.yesterday, 2)}</td>
-      <td class="right">${changeBadge(row.change)}</td>
+      <td class="right">${badge(row.change)}</td>
     </tr>`;
   }
+  document.getElementById('revenue-body').innerHTML = rows;
+  document.getElementById('rev-updated').textContent = updNote;
 
-  html += `</tbody></table></div>`;
-
-  html += `<div style="text-align:center;color:var(--muted);font-size:.78rem;margin:20px 0 8px">
-    Last updated: ${new Date().toLocaleTimeString()}${d.is_today ? ' — Auto-refreshes every 5 minutes' : ' — Historical view'}
-  </div>`;
-
-  document.getElementById('content').innerHTML = html;
   document.getElementById('loading').style.display = 'none';
-  document.getElementById('content').style.display = 'block';
+  document.getElementById('main-content').style.display = 'block';
 }
 
+// ── Auto-refresh ───────────────────────────────────────
 loadData();
 setInterval(() => { if (!currentDate) loadData(); }, 300000);
 </script>
