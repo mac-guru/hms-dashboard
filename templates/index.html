@@ -165,40 +165,6 @@
     .badge-up   { background: #eafaf1; color: var(--green); padding: 3px 8px; border-radius: 20px; font-size: .76rem; font-weight: 600; }
     .badge-down { background: #fdf0ee; color: var(--red);   padding: 3px 8px; border-radius: 20px; font-size: .76rem; font-weight: 600; }
 
-    /* ── Guest list ── */
-    .guest-summary {
-      display: flex; gap: 14px; margin-bottom: 16px; flex-wrap: wrap;
-    }
-    .guest-chip {
-      background: var(--card); border-radius: 10px;
-      padding: 10px 18px; font-size: .85rem; font-weight: 600;
-      box-shadow: 0 2px 8px rgba(0,0,0,.06);
-      display: flex; align-items: center; gap: 8px; color: var(--text);
-    }
-    .guest-chip span { font-size: 1.1rem; }
-    .plan-badge {
-      display: inline-block; padding: 2px 9px; border-radius: 12px;
-      font-size: .72rem; font-weight: 700; text-transform: uppercase;
-      letter-spacing: .3px;
-    }
-    .plan-bb { background: #dbeafe; color: #1e40af; }
-    .plan-hb { background: #fef3c7; color: #92400e; }
-    .plan-fb { background: #d1fae5; color: #065f46; }
-    .plan-ro { background: #f3f4f6; color: #374151; }
-    .plan-other { background: #ede9fe; color: #5b21b6; }
-    .status-badge {
-      display: inline-block; padding: 3px 10px; border-radius: 12px;
-      font-size: .76rem; font-weight: 700; white-space: nowrap;
-    }
-    .status-today    { background: #fee2e2; color: #991b1b; }
-    .status-tomorrow { background: #fef3c7; color: #92400e; }
-    .status-staying  { background: #d1fae5; color: #065f46; }
-    .no-guests {
-      text-align: center; padding: 48px 20px;
-      color: var(--muted); font-size: .9rem;
-    }
-    .no-guests .no-icon { font-size: 2.5rem; margin-bottom: 10px; }
-
     /* ── Footer ── */
     .footer { text-align: center; color: var(--muted); font-size: .74rem; margin: 24px 0 12px; }
 
@@ -248,24 +214,8 @@
     .bs-go-btn:hover { background: #2c5f8a; }
     .bs-error { color: var(--red); font-size: .78rem; margin-top: 8px; min-height: 16px; }
 
-    .nat-badge {
-      display: inline-block; padding: 2px 7px; border-radius: 8px;
-      font-size: .72rem; font-weight: 700; background: #f0f4f8; color: var(--text);
-      letter-spacing: .3px;
-    }
-    .bilto-badge {
-      display: inline-block; padding: 2px 8px; border-radius: 8px;
-      font-size: .72rem; font-weight: 700; background: #ede9fe; color: #5b21b6;
-    }
-    #tab-guests th, #tab-guests td { padding: 10px 12px; white-space: nowrap; }
-
     /* ── Responsive ── */
     @media (max-width: 700px) { .hide-sm { display: none; } }
-    /* Guest table: horizontal scroll only on small screens */
-    @media (max-width: 900px) {
-      #tab-guests .table-card { overflow-x: auto; }
-      #tab-guests table { min-width: 780px; }
-    }
     @media (max-width: 480px) {
       main { padding: 12px; }
       .header-left h1 { font-size: 1rem; }
@@ -319,7 +269,6 @@
 <div class="tabs">
   <button class="tab-btn active" onclick="switchTab('occupancy', this)">📊 Occupancy</button>
   <button class="tab-btn" onclick="switchTab('revenue', this)">💰 Revenue</button>
-  <button class="tab-btn" onclick="switchTab('guests', this)">👥 In-House <span id="guest-count-badge"></span></button>
 </div>
 
 <div id="error-msg"></div>
@@ -378,32 +327,6 @@
     <div class="footer" id="rev-updated"></div>
   </div>
 
-  <!-- In-House Guests Tab -->
-  <div class="tab-content" id="tab-guests">
-    <div class="guest-summary" id="guest-summary"></div>
-    <div class="table-card">
-      <table>
-        <thead>
-          <tr>
-            <th>Room</th>
-            <th>Guest Name</th>
-            <th>NAT</th>
-            <th>Plan</th>
-            <th class="right">Pax</th>
-            <th class="right">Arrival</th>
-            <th class="right">Departure</th>
-            <th class="right">Nights</th>
-            <th class="right">Rate</th>
-            <th class="right hide-sm">Bill To</th>
-            <th class="right hide-sm">Checked In By</th>
-            <th class="right">Status</th>
-          </tr>
-        </thead>
-        <tbody id="guest-body"></tbody>
-      </table>
-    </div>
-    <div class="footer" id="guest-updated"></div>
-  </div>
 
 </main>
 
@@ -629,84 +552,8 @@ function renderDashboard(d) {
   document.getElementById('revenue-body').innerHTML = rows;
   document.getElementById('rev-updated').textContent = updNote;
 
-  // ── Guests tab ──
-  renderGuests(d.guests);
-
   document.getElementById('loading').style.display = 'none';
   document.getElementById('main-content').style.display = 'block';
-}
-
-// ── Render Guests ──────────────────────────────────────
-function planBadge(plan) {
-  const p = (plan || '').trim().toUpperCase();
-  if (p === 'BB' || p.includes('B&B') || p.includes('BF'))
-    return `<span class="plan-badge plan-bb">BB</span>`;
-  if (p === 'HB' || p.includes('HALF'))
-    return `<span class="plan-badge plan-hb">HB</span>`;
-  if (p === 'FB' || p.includes('FULL') || p === 'AP')
-    return `<span class="plan-badge plan-fb">FB</span>`;
-  if (p === 'EP')
-    return `<span class="plan-badge plan-ro">EP</span>`;
-  if (p === 'RO' || p === '')
-    return `<span class="plan-badge plan-ro">RO</span>`;
-  return `<span class="plan-badge plan-other">${plan.trim()}</span>`;
-}
-
-function statusBadge(remaining) {
-  if (remaining === null || remaining === undefined)
-    return '—';
-  if (remaining <= 0)
-    return `<span class="status-badge status-today">Departing Today</span>`;
-  if (remaining === 1)
-    return `<span class="status-badge status-tomorrow">Tomorrow</span>`;
-  return `<span class="status-badge status-staying">${remaining} nights left</span>`;
-}
-
-function renderGuests(guests) {
-  // Summary chips
-  const total      = guests.length;
-  const departing  = guests.filter(g => g.remaining === 0).length;
-  const tomorrow   = guests.filter(g => g.remaining === 1).length;
-
-  document.getElementById('guest-count-badge').textContent =
-    total ? `(${total})` : '';
-
-  document.getElementById('guest-summary').innerHTML = `
-    <div class="guest-chip"><span>🛏️</span> ${total} In-House</div>
-    ${departing ? `<div class="guest-chip"><span>🚪</span> ${departing} Departing Today</div>` : ''}
-    ${tomorrow  ? `<div class="guest-chip"><span>📦</span> ${tomorrow} Leaving Tomorrow</div>` : ''}
-  `;
-
-  if (!guests.length) {
-    document.getElementById('guest-body').innerHTML =
-      `<tr><td colspan="11"><div class="no-guests">
-        <div class="no-icon">🏨</div>No guests currently in-house
-       </div></td></tr>`;
-    return;
-  }
-
-  let rows = '';
-  for (const g of guests) {
-    const nat = g.nat ? `<span class="nat-badge">${g.nat}</span>` : '—';
-    const bilto = g.bill_to ? `<span class="bilto-badge">${g.bill_to}</span>` : '—';
-    rows += `<tr>
-      <td><strong>${g.room}</strong></td>
-      <td>${g.name || '<em style="color:#aaa">—</em>'}</td>
-      <td>${nat}</td>
-      <td>${planBadge(g.plan)}</td>
-      <td class="right">${g.pax || '—'}</td>
-      <td class="right">${g.arrival  || '—'}</td>
-      <td class="right">${g.departure || '—'}</td>
-      <td class="right">${g.total_nights !== null ? g.total_nights + ' N' : '—'}</td>
-      <td class="right">${g.rate ? g.rate.toLocaleString('en-IN') : '—'}</td>
-      <td class="right hide-sm">${bilto}</td>
-      <td class="right hide-sm">${g.checked_in_by || '—'}</td>
-      <td class="right">${statusBadge(g.remaining)}</td>
-    </tr>`;
-  }
-  document.getElementById('guest-body').innerHTML = rows;
-  document.getElementById('guest-updated').textContent =
-    `${total} guests in-house · Last updated: ${new Date().toLocaleTimeString()}`;
 }
 
 // ── Auto-refresh ───────────────────────────────────────

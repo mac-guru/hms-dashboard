@@ -116,109 +116,6 @@ def api_dashboard():
         """, (selected.date(), selected.date()))
         rsv = cur.fetchone() or {}
 
-        # ── In-house Guest List ──────────────────────────────
-        # Primary source: Guests table (GGone=0 = still in-house, has NAT, real departure)
-        # Supplement:     Bills table  (catches rooms with no Guests record, e.g. multi-room bookings)
-        cur.execute("""
-            SELECT
-                g.GRmNo AS room,
-                LTRIM(RTRIM(ISNULL(g.GName, ''))) AS name,
-                LTRIM(RTRIM(ISNULL(g.GNat, '')))  AS nat,
-                LTRIM(RTRIM(ISNULL(
-                    (SELECT TOP 1 RsvDetPlan FROM FRSVDet
-                     WHERE RsvDetHdrId = g.GRsvHdrId AND RsvDetStat = 'open'),
-                    ''
-                ))) AS meal_plan,
-                ISNULL(
-                    (SELECT TOP 1
-                        CASE UPPER(LTRIM(RTRIM(RsvRmOcc)))
-                            WHEN 'SGL' THEN 1 WHEN 'SINGLE' THEN 1
-                            WHEN 'DBL' THEN 2 WHEN 'DOUBLE' THEN 2
-                            WHEN 'TWN' THEN 2 WHEN 'TWIN'   THEN 2
-                            WHEN 'TPL' THEN 3 WHEN 'TRIPLE' THEN 3
-                            ELSE ISNULL(RsvDetPax, 1)
-                        END
-                     FROM FRSVDet
-                     WHERE RsvDetHdrId = g.GRsvHdrId AND RsvDetStat = 'open'),
-                    1
-                ) AS pax,
-                CAST(g.GArrDt AS DATE) AS arrival,
-                -- Departure: Bills RC MAX is most reliable (updated on every extension)
-                -- Fall back to FRSVDet, then Guests.GDepDt
-                CAST(ISNULL(
-                    (SELECT MAX(CAST(BillRmDepDate AS DATE)) FROM Bills
-                     WHERE BillRmNo = g.GRmNo
-                       AND BillCode = 'RC'
-                       AND BillCleared = 0
-                       AND (BillVoid IS NULL OR BillVoid = 0)),
-                    ISNULL(
-                        (SELECT TOP 1 CAST(RsvDetDepDt AS DATE) FROM FRSVDet
-                         WHERE RsvDetHdrId = g.GRsvHdrId AND RsvDetStat = 'open'),
-                        g.GDepDt
-                    )
-                ) AS DATE) AS departure,
-                LTRIM(RTRIM(ISNULL(h.RsvHdrRqBy, ''))) AS checked_in_by,
-                LTRIM(RTRIM(ISNULL(h.RsvHdrAgt, '')))  AS bill_to_full,
-                ISNULL(
-                    (SELECT TOP 1
-                        CASE WHEN BillCurr NOT IN ('NRS') AND BillCurr IS NOT NULL
-                             THEN ISNULL(BillRC, 0) * ISNULL(BillFxRate, 1)
-                             ELSE ISNULL(BillRC, 0)
-                        END
-                     FROM Bills
-                     WHERE BillRmNo = g.GRmNo
-                       AND BillCode = 'RC'
-                       AND BillCleared = 0
-                       AND (BillVoid IS NULL OR BillVoid = 0)
-                     ORDER BY BillDt DESC),
-                    0
-                ) AS room_rate
-            FROM Guests g
-            LEFT JOIN FRSVHDR h ON h.RsvHdrId = g.GRsvHdrId
-            WHERE (g.GGone = 0 OR g.GGone IS NULL)
-              AND g.GRmNo IS NOT NULL AND g.GRmNo != ''
-              AND CAST(g.GDepDt AS DATE) >= CAST(GETDATE() AS DATE)
-
-            UNION
-
-            SELECT
-                b.BillRmNo AS room,
-                MAX(LTRIM(RTRIM(ISNULL(g2.GName, ISNULL(b.BillGuestName, ''))))) AS name,
-                MAX(LTRIM(RTRIM(ISNULL(g2.GNat, '')))) AS nat,
-                MAX(LTRIM(RTRIM(ISNULL(b.BillPlan, '')))) AS meal_plan,
-                CASE UPPER(LTRIM(RTRIM(MAX(b.BillRmOcc))))
-                    WHEN 'SGL' THEN 1 WHEN 'SINGLE' THEN 1
-                    WHEN 'DBL' THEN 2 WHEN 'DOUBLE' THEN 2
-                    WHEN 'TWN' THEN 2 WHEN 'TWIN'   THEN 2
-                    WHEN 'TPL' THEN 3 WHEN 'TRIPLE' THEN 3
-                    ELSE 1
-                END AS pax,
-                CAST(MIN(b.BillRmArrDate) AS DATE) AS arrival,
-                CAST(MAX(b.BillRmDepDate) AS DATE) AS departure,
-                NULL AS checked_in_by,
-                NULL AS bill_to_full,
-                MAX(CASE WHEN b.BillCurr NOT IN ('NRS') AND b.BillCurr IS NOT NULL
-                         THEN ISNULL(b.BillRC, 0) * ISNULL(b.BillFxRate, 1)
-                         ELSE ISNULL(b.BillRC, 0)
-                    END) AS room_rate
-            FROM Bills b
-            LEFT JOIN Guests g2 ON g2.GId = b.BillGId
-            WHERE b.BillCleared = 0
-              AND (b.BillVoid IS NULL OR b.BillVoid = 0)
-              AND b.BillCode = 'RC'
-              AND b.BillRmNo IS NOT NULL AND b.BillRmNo != ''
-              AND b.BillRmNo NOT IN (
-                  SELECT GRmNo FROM Guests
-                  WHERE (GGone = 0 OR GGone IS NULL)
-                    AND GRmNo IS NOT NULL AND GRmNo != ''
-                    AND CAST(GDepDt AS DATE) >= CAST(GETDATE() AS DATE)
-              )
-            GROUP BY b.BillRmNo
-
-            ORDER BY room
-        """)
-        guests_raw = cur.fetchall()
-
         # ── Revenue from Bills table (matches printed report) ─
         # OTA rooms are billed in USD; multiply BillTot * BillFxRate for NPR value.
         def bills_revenue(date):
@@ -388,51 +285,6 @@ def api_dashboard():
         t_occ = rooms_today
         y_occ = rooms_yest
 
-        # ── Format guests ────────────────────────────────
-        def abbrev_agent(full):
-            """Convert full agent name to short billing code (DP, HSJ, etc.)."""
-            if not full or not full.strip():
-                return 'DP'
-            f = full.strip()
-            fu = f.upper()
-            if 'DIRECT' in fu and 'PAY' in fu:
-                return 'DP'
-            words = f.split()
-            if words:
-                first = words[0].strip('.,')
-                if first == first.upper() and len(first) <= 5 and first.isalpha():
-                    return first          # Already an acronym e.g. BSR
-            # Build initials from first 3 meaningful words
-            initials = ''.join(w[0].upper() for w in words[:3] if w)
-            return initials if initials else f[:4].upper()
-
-        today_date = datetime.now().date()
-        guests = []
-        for g in guests_raw:
-            arr = g["arrival"]  if isinstance(g["arrival"],  type(today_date)) else (g["arrival"].date()  if g["arrival"]  else None)
-            dep = g["departure"] if isinstance(g["departure"], type(today_date)) else (g["departure"].date() if g["departure"] else None)
-            total_nights = (dep - arr).days        if arr and dep else None
-            remaining    = (dep - today_date).days if dep         else None
-            guests.append({
-                "room":         (g["room"] or "").strip(),
-                "name":         (g["name"] or "").strip(),
-                "nat":          (g["nat"]  or "").strip(),
-                "plan":         (g["meal_plan"] or "").strip(),
-                "pax":          g["pax"] if g["pax"] else "—",
-                "arrival":      arr.strftime("%b %d") if arr else "",
-                "departure":    dep.strftime("%b %d") if dep else "",
-                "total_nights": total_nights,
-                "remaining":    remaining,
-                "bill_to":      abbrev_agent(g["bill_to_full"]) if g.get("bill_to_full") else "DP",
-                "checked_in_by": (g["checked_in_by"] or "").strip(),
-                "rate":          int(round(float(g.get("room_rate") or 0))),
-            })
-        # Sort: departing today first, tomorrow second, then by room number
-        guests.sort(key=lambda x: (
-            0 if x["remaining"] == 0 else (1 if x["remaining"] == 1 else 2),
-            x["room"]
-        ))
-
         return jsonify({
             "date":         selected.strftime("%A, %B %d, %Y"),
             "today_str":    selected.strftime("%m/%d/%Y"),
@@ -478,7 +330,6 @@ def api_dashboard():
                 "fy_label":      f"FY {fy_start_bs.year}/{fy_start_bs.year + 1}",
             },
             "revenue": revenue,
-            "guests":  guests,
         })
 
     except Exception as e:
