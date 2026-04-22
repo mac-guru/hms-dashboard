@@ -164,7 +164,7 @@ def api_dashboard():
         # ── Room count from Bills (matches printed report, includes day-use) ──
         def bills_room_count(date):
             cur.execute("""
-                SELECT COUNT(DISTINCT BillRmNo) as cnt
+                SELECT COUNT(BillRmNo) as cnt
                 FROM Bills
                 WHERE CAST(BillDt AS DATE) = %s
                   AND BillCode = 'RC'
@@ -180,7 +180,7 @@ def api_dashboard():
         cur.execute("""
             SELECT ISNULL(SUM(dc), 0) as total
             FROM (
-                SELECT CAST(BillDt AS DATE) as d, COUNT(DISTINCT BillRmNo) as dc
+                SELECT CAST(BillDt AS DATE) as d, COUNT(BillRmNo) as dc
                 FROM Bills
                 WHERE YEAR(BillDt) = %s AND MONTH(BillDt) = %s
                   AND BillCode = 'RC'
@@ -197,7 +197,7 @@ def api_dashboard():
         cur.execute("""
             SELECT ISNULL(SUM(dc), 0) as total
             FROM (
-                SELECT CAST(BillDt AS DATE) as d, COUNT(DISTINCT BillRmNo) as dc
+                SELECT CAST(BillDt AS DATE) as d, COUNT(BillRmNo) as dc
                 FROM Bills
                 WHERE CAST(BillDt AS DATE) >= %s
                   AND CAST(BillDt AS DATE) <= %s
