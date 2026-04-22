@@ -91,7 +91,7 @@
     .tab-btn:hover:not(.active) { color: var(--text); }
 
     /* ── Main Content ── */
-    main { padding: 20px; max-width: 1100px; margin: 0 auto; }
+    main { padding: 20px 32px; width: 100%; box-sizing: border-box; }
     .tab-content { display: none; }
     .tab-content.active { display: block; }
 
@@ -267,6 +267,7 @@
       #tab-guests table { min-width: 780px; }
     }
     @media (max-width: 480px) {
+      main { padding: 12px; }
       .header-left h1 { font-size: 1rem; }
       .tab-btn { padding: 12px 16px; font-size: .82rem; }
       .stat-value { font-size: 1.6rem; }
