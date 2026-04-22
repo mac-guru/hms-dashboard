@@ -385,19 +385,44 @@ def api_dashboard():
 @app.route("/api/schema-debug")
 @login_required
 def api_schema_debug():
-    """Temporary: inspect FRSVDet and FRSVHDR column names."""
+    """Temporary: sample live in-house data from FRSVDet/FRSVHDR/Guests."""
     try:
-        conn = get_db()
-        cur  = conn.cursor(as_dict=True)
+        conn  = get_db()
+        cur   = conn.cursor(as_dict=True)
+        today = datetime.now().date()
         cur.execute("""
-            SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE
-            FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_NAME IN ('FRSVDet','FRSVHDR','Guests')
-            ORDER BY TABLE_NAME, ORDINAL_POSITION
-        """)
-        cols = cur.fetchall()
+            SELECT
+                d.RsvDetRmCode  AS room,
+                h.RsvHdrName    AS name,
+                g.GNat          AS nat,
+                d.RsvDetPlan    AS plan,
+                d.RsvDetPax     AS pax,
+                d.RsvDetArrDt   AS arrival,
+                d.RsvDetDepDt   AS departure,
+                d.RsvDetStat    AS stat,
+                h.RsvHdrAgt     AS agt,
+                h.RsvHdrSrc     AS src,
+                h.RsvHdrThru    AS thru,
+                h.RsvHdrTurnBy  AS turn_by,
+                h.RsvHdrRqBy    AS rq_by,
+                g.GPpNo         AS passport,
+                g.GIdentity     AS identity,
+                g.GSeq          AS g_seq
+            FROM FRSVDet d
+            JOIN FRSVHDR h ON h.RsvHdrId = d.RsvDetHdrId
+            LEFT JOIN Guests g ON g.GRsvId = d.RsvDetId AND g.GSeq = 1
+            WHERE d.RsvDetStat = 'open'
+              AND CAST(d.RsvDetArrDt AS DATE) <= %s
+              AND CAST(d.RsvDetDepDt AS DATE) >= %s
+            ORDER BY d.RsvDetRmCode
+        """, (today, today))
+        rows = cur.fetchall()
         conn.close()
-        return jsonify(cols)
+        for row in rows:
+            for k, v in row.items():
+                if hasattr(v, 'strftime'):
+                    row[k] = str(v)
+        return jsonify(rows)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
