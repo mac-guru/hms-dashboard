@@ -654,6 +654,11 @@ function renderDashboard(d) {
 
 // ── Rooms tab ──────────────────────────────────────────
 async function loadRooms() {
+  // Hide global spinner and reveal main content (works on all template versions)
+  const globalLoader = document.getElementById('loading');
+  if (globalLoader) globalLoader.style.display = 'none';
+  document.getElementById('main-content').style.display = 'block';
+
   document.getElementById('rooms-loading-msg').style.display = 'block';
   document.getElementById('room-grid').innerHTML = '';
   document.getElementById('rooms-summary-bar').innerHTML = '';
