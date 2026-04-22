@@ -406,7 +406,7 @@ def api_schema_debug():
                 h.RsvHdrTurnBy  AS turn_by,
                 h.RsvHdrRqBy    AS rq_by,
                 g.GPpNo         AS passport,
-                g.GIdentity     AS identity,
+                g.GIdentity     AS id_card,
                 g.GSeq          AS g_seq
             FROM FRSVDet d
             JOIN FRSVHDR h ON h.RsvHdrId = d.RsvDetHdrId
