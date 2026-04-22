@@ -399,6 +399,31 @@ def api_activity():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/debug-cash")
+@login_required
+def api_debug_cash():
+    """Temp: show today ACR + PMT broken down by BillPmode to find correct filter."""
+    try:
+        conn = pymssql.connect(**DB)
+        cur  = conn.cursor(as_dict=True)
+        cur.execute("""
+            SELECT BillCode, BillPmode,
+                   SUM(ISNULL(BillTot,0)) AS total,
+                   COUNT(*) AS cnt
+            FROM Bills
+            WHERE CAST(BillDt AS DATE) = CAST(GETDATE() AS DATE)
+              AND (BillVoid IS NULL OR BillVoid = 0)
+              AND BillCode IN ('ACR','PMT','MB','CR')
+            GROUP BY BillCode, BillPmode
+            ORDER BY BillCode, BillPmode
+        """)
+        rows = cur.fetchall()
+        conn.close()
+        return jsonify(rows)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/bs-to-ad")
 @login_required
 def api_bs_to_ad():
