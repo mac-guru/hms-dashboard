@@ -272,11 +272,22 @@ function switchTab(name, btn) {
 }
 
 // ── Date helpers ───────────────────────────────────────
-function getToday() { return new Date().toISOString().split('T')[0]; }
+function getToday() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
 
-function formatDisplay(dateStr) {
-  const d = new Date(dateStr + 'T00:00:00');
-  return d.toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric', year:'numeric' });
+function addDays(dateStr, delta) {
+  const parts = dateStr.split('-');
+  const d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+  d.setDate(d.getDate() + delta);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -288,9 +299,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function goDate(delta) {
   const picker = document.getElementById('date-picker');
-  const d = new Date(picker.value + 'T00:00:00');
-  d.setDate(d.getDate() + delta);
-  const str = d.toISOString().split('T')[0];
+  const str = addDays(picker.value, delta);
   if (str > getToday()) return;
   picker.value = str;
   currentDate = str === getToday() ? null : str;
@@ -350,7 +359,7 @@ function renderDashboard(d) {
   // Date bar
   document.getElementById('date-display').textContent = d.date;
   const picker = document.getElementById('date-picker');
-  document.getElementById('next-btn').disabled = picker.value >= new Date().toISOString().split('T')[0];
+  document.getElementById('next-btn').disabled = picker.value >= getToday();
 
   // ── Occupancy tab ──
   document.getElementById('lbl-today').textContent = labelSel;
