@@ -196,7 +196,21 @@ C:\nssm\nssm-2.24\win64\nssm.exe restart HMSDashboard
 - [x] Phase 2 — Occupancy matching HMS Room Occupancy History report
 - [x] Phase 3 — Deployed to Windows server, accessible from anywhere
 - [x] Phase 4 — Login, PWA (installable on iPhone), HTTPS via Cloudflare
-- [ ] Phase 5 — Additional sections (guest list, arrivals/departures, etc.)
+- [x] Phase 5 — Cash Received (today + MTD), full-width layout, Nepali date picker
+- [ ] Phase 6 — Arrivals/Departures tab, room status grid, 7-day forecast
+
+---
+
+## Key Technical Notes (added Apr 2026)
+
+| Finding | Detail |
+|---------|--------|
+| Cash Received filter | `BillPmode = 1` across ALL BillCodes — matches HMS "Cash Received" report exactly |
+| pmode=0 | Charges posted to room folio (not cash) |
+| pmode=1 | Cash/direct received (ACR advances, F&B cash sales, Fonepay, bank) |
+| pmode=2 | Physical cash PMT / refunds (CR) — NOT in HMS cash report |
+| Departure date source | `MAX(Bills.BillRmDepDate WHERE BillCode='RC')` → most reliable after stay extension |
+| Page layout | Full-width (`main` has no max-width), 32px side padding on desktop, 12px on mobile |
 
 ---
 
