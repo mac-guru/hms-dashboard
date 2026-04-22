@@ -279,6 +279,7 @@
   <a href="/logout" class="logout-btn">Sign Out</a>
 </header>
 
+{% if role != 'housekeeping' %}
 <div class="date-bar">
   <button class="date-nav-btn" id="prev-btn" onclick="goDate(-1)" title="Previous day">&#8592;</button>
   <div id="date-display">
@@ -305,11 +306,14 @@
 
   <button class="today-btn" onclick="goToday()">Today</button>
 </div>
+{% endif %}
 
 <div class="tabs">
+  {% if role != 'housekeeping' %}
   <button class="tab-btn active" onclick="switchTab('occupancy', this)">📊 Occupancy</button>
   <button class="tab-btn" onclick="switchTab('revenue', this)">💰 Revenue</button>
-  <button class="tab-btn" onclick="switchTab('rooms', this)">🏠 Rooms</button>
+  {% endif %}
+  <button class="tab-btn{% if role == 'housekeeping' %} active{% endif %}" onclick="switchTab('rooms', this)">🏠 Rooms</button>
 </div>
 
 <div id="error-msg"></div>
@@ -317,6 +321,7 @@
 
 <main id="main-content" style="display:none">
 
+  {% if role != 'housekeeping' %}
   <!-- Occupancy Tab -->
   <div class="tab-content active" id="tab-occupancy">
     <div class="section-title" id="occ-label-today">Today</div>
@@ -383,9 +388,10 @@
 
     <div class="footer" id="rev-updated"></div>
   </div>
+  {% endif %}
 
   <!-- Rooms Tab -->
-  <div class="tab-content" id="tab-rooms">
+  <div class="tab-content{% if role == 'housekeeping' %} active{% endif %}" id="tab-rooms">
     <!-- Legend -->
     <div class="room-legend-bar">
       <span class="rl-chip rm-occupied">Occupied</span>
@@ -513,11 +519,15 @@ document.getElementById('bs-popup').addEventListener('click', e => e.stopPropaga
 
 // ── Init on load ───────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
+  {% if role != 'housekeeping' %}
   initBsPicker();
   const picker = document.getElementById('date-picker');
   picker.max   = getToday();
   picker.value = getToday();
   loadData();
+  {% else %}
+  loadRooms();
+  {% endif %}
 });
 
 function goDate(delta) {
@@ -697,8 +707,10 @@ function renderRooms(rooms) {
 }
 
 // ── Auto-refresh ───────────────────────────────────────
+{% if role != 'housekeeping' %}
 loadData();
 setInterval(() => { if (!currentDate) loadData(); }, 300000);
+{% endif %}
 setInterval(() => {
   if (document.getElementById('tab-rooms').classList.contains('active')) loadRooms();
 }, 120000);

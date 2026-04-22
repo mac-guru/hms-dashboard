@@ -7,8 +7,10 @@ from nepali_datetime import date as NepaliDate
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'hms-dashboard-key-2025')
 
-DASH_USER = os.environ.get('DASH_USER', 'amrit')
-DASH_PASS = os.environ.get('DASH_PASS', 'Nepal@213')
+DASH_USER    = os.environ.get('DASH_USER',    'amrit')
+DASH_PASS    = os.environ.get('DASH_PASS',    'Nepal@213')
+DASH_HK_USER = os.environ.get('DASH_HK_USER', 'housekeeping')
+DASH_HK_PASS = os.environ.get('DASH_HK_PASS', 'HK@hms2025')
 
 def login_required(f):
     @wraps(f)
@@ -64,8 +66,15 @@ def get_session():
 def login():
     error = None
     if request.method == "POST":
-        if request.form.get("username") == DASH_USER and request.form.get("password") == DASH_PASS:
+        u = request.form.get("username")
+        p = request.form.get("password")
+        if u == DASH_USER and p == DASH_PASS:
             session['logged_in'] = True
+            session['role'] = 'admin'
+            return redirect(url_for('index'))
+        elif u == DASH_HK_USER and p == DASH_HK_PASS:
+            session['logged_in'] = True
+            session['role'] = 'housekeeping'
             return redirect(url_for('index'))
         error = "Invalid username or password."
     return render_template("login.html", error=error)
@@ -78,6 +87,8 @@ def logout():
 @app.route("/api/dashboard")
 @login_required
 def api_dashboard():
+    if session.get('role') == 'housekeeping':
+        return jsonify({'error': 'Access denied'}), 403
     try:
         date_param = request.args.get("date")
         selected   = datetime.strptime(date_param, "%Y-%m-%d") if date_param else datetime.now()
@@ -473,7 +484,7 @@ def api_bs_to_ad():
 @app.route("/")
 @login_required
 def index():
-    return render_template("index.html")
+    return render_template("index.html", role=session.get('role', 'admin'))
 
 
 if __name__ == "__main__":
