@@ -248,7 +248,18 @@
     .bs-go-btn:hover { background: #2c5f8a; }
     .bs-error { color: var(--red); font-size: .78rem; margin-top: 8px; min-height: 16px; }
 
+    .nat-badge {
+      display: inline-block; padding: 2px 7px; border-radius: 8px;
+      font-size: .72rem; font-weight: 700; background: #f0f4f8; color: var(--text);
+      letter-spacing: .3px;
+    }
+    .bilto-badge {
+      display: inline-block; padding: 2px 8px; border-radius: 8px;
+      font-size: .72rem; font-weight: 700; background: #ede9fe; color: #5b21b6;
+    }
+
     /* ── Responsive ── */
+    @media (max-width: 700px) { .hide-sm { display: none; } }
     @media (max-width: 480px) {
       .header-left h1 { font-size: 1rem; }
       .tab-btn { padding: 12px 16px; font-size: .82rem; }
@@ -369,10 +380,14 @@
           <tr>
             <th>Room</th>
             <th>Guest Name</th>
+            <th>NAT</th>
             <th>Plan</th>
+            <th class="right">Pax</th>
             <th class="right">Arrival</th>
             <th class="right">Departure</th>
             <th class="right">Nights</th>
+            <th class="right hide-sm">Bill To</th>
+            <th class="right hide-sm">Checked In By</th>
             <th class="right">Status</th>
           </tr>
         </thead>
@@ -615,16 +630,18 @@ function renderDashboard(d) {
 
 // ── Render Guests ──────────────────────────────────────
 function planBadge(plan) {
-  const p = (plan || '').toUpperCase();
-  if (p.includes('BB') || p.includes('B&B') || p.includes('BF'))
+  const p = (plan || '').trim().toUpperCase();
+  if (p === 'BB' || p.includes('B&B') || p.includes('BF'))
     return `<span class="plan-badge plan-bb">BB</span>`;
-  if (p.includes('HB') || p.includes('HALF'))
+  if (p === 'HB' || p.includes('HALF'))
     return `<span class="plan-badge plan-hb">HB</span>`;
-  if (p.includes('FB') || p.includes('FULL') || p.includes('AP'))
+  if (p === 'FB' || p.includes('FULL') || p === 'AP')
     return `<span class="plan-badge plan-fb">FB</span>`;
-  if (p.includes('RO') || p.includes('EP') || p === '')
+  if (p === 'EP')
+    return `<span class="plan-badge plan-ro">EP</span>`;
+  if (p === 'RO' || p === '')
     return `<span class="plan-badge plan-ro">RO</span>`;
-  return `<span class="plan-badge plan-other">${plan}</span>`;
+  return `<span class="plan-badge plan-other">${plan.trim()}</span>`;
 }
 
 function statusBadge(remaining) {
@@ -662,13 +679,19 @@ function renderGuests(guests) {
 
   let rows = '';
   for (const g of guests) {
+    const nat = g.nat ? `<span class="nat-badge">${g.nat}</span>` : '—';
+    const bilto = g.bill_to ? `<span class="bilto-badge">${g.bill_to}</span>` : '—';
     rows += `<tr>
       <td><strong>${g.room}</strong></td>
       <td>${g.name || '<em style="color:#aaa">—</em>'}</td>
+      <td>${nat}</td>
       <td>${planBadge(g.plan)}</td>
+      <td class="right">${g.pax || '—'}</td>
       <td class="right">${g.arrival  || '—'}</td>
       <td class="right">${g.departure || '—'}</td>
       <td class="right">${g.total_nights !== null ? g.total_nights + ' N' : '—'}</td>
+      <td class="right hide-sm">${bilto}</td>
+      <td class="right hide-sm">${g.checked_in_by || '—'}</td>
       <td class="right">${statusBadge(g.remaining)}</td>
     </tr>`;
   }
