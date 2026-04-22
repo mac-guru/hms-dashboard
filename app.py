@@ -59,7 +59,22 @@ HOUSEKEEPING_PAGE = """<!DOCTYPE html>
     .rm-houseuse  { background:#f1f5f9; border-color:#94a3b8; color:#475569; }
     #msg  { text-align:center; padding:40px; color:var(--muted); }
     .foot { text-align:center; color:var(--muted); font-size:.74rem; margin:24px 0 12px; }
-    @media(max-width:480px){ main{padding:12px;} .grid{grid-template-columns:repeat(3,1fr);} .rno{font-size:1.2rem;} }
+    @media(max-width:600px){
+      main { padding:10px; }
+      .legend { gap:5px; margin-bottom:10px; }
+      .lc { padding:3px 9px; font-size:.68rem; }
+      .summary { gap:6px; margin-bottom:12px; }
+      .sc { padding:5px 10px; font-size:.75rem; }
+      .grid { grid-template-columns:repeat(3,1fr); gap:6px; }
+      .card { padding:8px 5px; border-radius:8px; }
+      .rno { font-size:1.15rem; }
+      .rst { font-size:.55rem; letter-spacing:.4px; }
+      .rg  { font-size:.6rem; margin-top:4px; }
+      .rd  { font-size:.58rem; }
+    }
+    @media(max-width:360px){
+      .grid { grid-template-columns:repeat(2,1fr); }
+    }
   </style>
 </head>
 <body>
