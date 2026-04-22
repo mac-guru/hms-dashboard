@@ -143,11 +143,19 @@ def api_dashboard():
                     1
                 ) AS pax,
                 CAST(g.GArrDt AS DATE) AS arrival,
-                -- Use FRSVDet departure (updated on extensions); fall back to Guests.GDepDt
+                -- Departure: Bills RC MAX is most reliable (updated on every extension)
+                -- Fall back to FRSVDet, then Guests.GDepDt
                 CAST(ISNULL(
-                    (SELECT TOP 1 CAST(RsvDetDepDt AS DATE) FROM FRSVDet
-                     WHERE RsvDetHdrId = g.GRsvHdrId AND RsvDetStat = 'open'),
-                    g.GDepDt
+                    (SELECT MAX(CAST(BillRmDepDate AS DATE)) FROM Bills
+                     WHERE BillRmNo = g.GRmNo
+                       AND BillCode = 'RC'
+                       AND BillCleared = 0
+                       AND (BillVoid IS NULL OR BillVoid = 0)),
+                    ISNULL(
+                        (SELECT TOP 1 CAST(RsvDetDepDt AS DATE) FROM FRSVDet
+                         WHERE RsvDetHdrId = g.GRsvHdrId AND RsvDetStat = 'open'),
+                        g.GDepDt
+                    )
                 ) AS DATE) AS departure,
                 LTRIM(RTRIM(ISNULL(h.RsvHdrRqBy, ''))) AS checked_in_by,
                 LTRIM(RTRIM(ISNULL(h.RsvHdrAgt, '')))  AS bill_to_full,
