@@ -376,52 +376,62 @@ def api_activity():
 @app.route("/api/debug-cash")
 @login_required
 def api_debug_cash():
-    """Temporary: explore DB for payment/receipt tables and bill codes."""
+    """Temporary: drill into PMT bills and PaidInPaidOut to find cash source."""
     try:
         conn = pymssql.connect(**DB)
         cur  = conn.cursor(as_dict=True)
 
-        # All tables in the hotel database
+        # Sample recent PMT bill rows — find which column holds the amount
         cur.execute("""
-            SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES
-            WHERE TABLE_TYPE='BASE TABLE'
-            ORDER BY TABLE_NAME
-        """)
-        tables = [r['TABLE_NAME'] for r in cur.fetchall()]
-
-        # All distinct BillCodes in Bills (to spot payment codes)
-        cur.execute("""
-            SELECT DISTINCT BillCode, COUNT(*) AS cnt
+            SELECT TOP 10 *
             FROM Bills
-            GROUP BY BillCode
-            ORDER BY cnt DESC
+            WHERE BillCode = 'PMT'
+            ORDER BY BillDt DESC
         """)
-        bill_codes = cur.fetchall()
+        pmt_samples = cur.fetchall()
 
-        # Sample rows from any table whose name looks like payments/receipts
-        pay_samples = {}
-        for t in tables:
-            tl = t.lower()
-            if any(k in tl for k in ['pay','rcpt','receipt','cash','settle','collect']):
-                try:
-                    cur.execute(f"SELECT TOP 3 * FROM [{t}]")
-                    pay_samples[t] = cur.fetchall()
-                    # Also get column names
-                    cur.execute(f"""
-                        SELECT COLUMN_NAME, DATA_TYPE
-                        FROM INFORMATION_SCHEMA.COLUMNS
-                        WHERE TABLE_NAME = %s
-                        ORDER BY ORDINAL_POSITION
-                    """, (t,))
-                    pay_samples[t + '__cols'] = [r['COLUMN_NAME'] for r in cur.fetchall()]
-                except Exception as ex:
-                    pay_samples[t] = str(ex)
+        # PMT today total (try BillTot and BillRC)
+        cur.execute("""
+            SELECT
+                SUM(ISNULL(BillTot,0)) AS tot_BillTot,
+                SUM(ISNULL(BillRC,0))  AS tot_BillRC
+            FROM Bills
+            WHERE BillCode = 'PMT'
+              AND CAST(BillDt AS DATE) = CAST(GETDATE() AS DATE)
+              AND (BillVoid IS NULL OR BillVoid = 0)
+        """)
+        pmt_today = cur.fetchone()
+
+        # PaidInPaidOut — columns + sample rows
+        cur.execute("""
+            SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_NAME = 'PaidInPaidOut'
+            ORDER BY ORDINAL_POSITION
+        """)
+        piopo_cols = [r['COLUMN_NAME'] for r in cur.fetchall()]
+
+        cur.execute("SELECT TOP 10 * FROM PaidInPaidOut ORDER BY 1 DESC")
+        piopo_samples = cur.fetchall()
+
+        # AgentRcv — columns + sample rows
+        cur.execute("""
+            SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_NAME = 'AgentRcv'
+            ORDER BY ORDINAL_POSITION
+        """)
+        agentrcv_cols = [r['COLUMN_NAME'] for r in cur.fetchall()]
+
+        cur.execute("SELECT TOP 5 * FROM AgentRcv ORDER BY 1 DESC")
+        agentrcv_samples = cur.fetchall()
 
         conn.close()
         return jsonify({
-            "tables": tables,
-            "bill_codes": bill_codes,
-            "payment_table_samples": pay_samples,
+            "pmt_samples":      pmt_samples,
+            "pmt_today":        pmt_today,
+            "piopo_cols":       piopo_cols,
+            "piopo_samples":    piopo_samples,
+            "agentrcv_cols":    agentrcv_cols,
+            "agentrcv_samples": agentrcv_samples,
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
