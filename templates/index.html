@@ -390,6 +390,7 @@
             <th class="right">Arrival</th>
             <th class="right">Departure</th>
             <th class="right">Nights</th>
+            <th class="right">Rate</th>
             <th class="right hide-sm">Bill To</th>
             <th class="right hide-sm">Checked In By</th>
             <th class="right">Status</th>
@@ -675,7 +676,7 @@ function renderGuests(guests) {
 
   if (!guests.length) {
     document.getElementById('guest-body').innerHTML =
-      `<tr><td colspan="7"><div class="no-guests">
+      `<tr><td colspan="11"><div class="no-guests">
         <div class="no-icon">🏨</div>No guests currently in-house
        </div></td></tr>`;
     return;
@@ -694,6 +695,7 @@ function renderGuests(guests) {
       <td class="right">${g.arrival  || '—'}</td>
       <td class="right">${g.departure || '—'}</td>
       <td class="right">${g.total_nights !== null ? g.total_nights + ' N' : '—'}</td>
+      <td class="right">${g.rate ? g.rate.toLocaleString('en-IN') : '—'}</td>
       <td class="right hide-sm">${bilto}</td>
       <td class="right hide-sm">${g.checked_in_by || '—'}</td>
       <td class="right">${statusBadge(g.remaining)}</td>

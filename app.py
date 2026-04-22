@@ -150,7 +150,12 @@ def api_dashboard():
                     g.GDepDt
                 ) AS DATE) AS departure,
                 LTRIM(RTRIM(ISNULL(h.RsvHdrRqBy, ''))) AS checked_in_by,
-                LTRIM(RTRIM(ISNULL(h.RsvHdrAgt, '')))  AS bill_to_full
+                LTRIM(RTRIM(ISNULL(h.RsvHdrAgt, '')))  AS bill_to_full,
+                ISNULL(
+                    (SELECT TOP 1 ISNULL(RsvRmRate, 0) FROM FRSVDet
+                     WHERE RsvDetHdrId = g.GRsvHdrId AND RsvDetStat = 'open'),
+                    0
+                ) AS room_rate
             FROM Guests g
             LEFT JOIN FRSVHDR h ON h.RsvHdrId = g.GRsvHdrId
             WHERE (g.GGone = 0 OR g.GGone IS NULL)
@@ -174,7 +179,11 @@ def api_dashboard():
                 CAST(MIN(b.BillRmArrDate) AS DATE) AS arrival,
                 CAST(MAX(b.BillRmDepDate) AS DATE) AS departure,
                 NULL AS checked_in_by,
-                NULL AS bill_to_full
+                NULL AS bill_to_full,
+                MAX(CASE WHEN b.BillCurr NOT IN ('NRS') AND b.BillCurr IS NOT NULL
+                         THEN ISNULL(b.BillRC, 0) * ISNULL(b.BillFxRate, 1)
+                         ELSE ISNULL(b.BillRC, 0)
+                    END) AS room_rate
             FROM Bills b
             LEFT JOIN Guests g2 ON g2.GId = b.BillGId
             WHERE b.BillCleared = 0
@@ -399,6 +408,7 @@ def api_dashboard():
                 "remaining":    remaining,
                 "bill_to":      abbrev_agent(g["bill_to_full"]) if g.get("bill_to_full") else "DP",
                 "checked_in_by": (g["checked_in_by"] or "").strip(),
+                "rate":          int(round(float(g.get("room_rate") or 0))),
             })
         # Sort: departing today first, tomorrow second, then by room number
         guests.sort(key=lambda x: (
