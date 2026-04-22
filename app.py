@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, render_template, request, session, redirect, url_for
+from flask import Flask, jsonify, render_template, request, session, redirect, url_for, Response
 from functools import wraps
 import pymssql, requests, re, json, os
 from datetime import datetime, timedelta
@@ -11,6 +11,115 @@ DASH_USER    = os.environ.get('DASH_USER',    'amrit')
 DASH_PASS    = os.environ.get('DASH_PASS',    'Nepal@213')
 DASH_HK_USER = os.environ.get('DASH_HK_USER', 'abhi')
 DASH_HK_PASS = os.environ.get('DASH_HK_PASS', 'abhii')
+
+HOUSEKEEPING_PAGE = """<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>HMS — Room Status</title>
+  <link rel="manifest" href="/static/manifest.json"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <meta name="apple-mobile-web-app-title" content="HMS Rooms"/>
+  <link rel="apple-touch-icon" href="/static/icons/icon-192.png"/>
+  <meta name="theme-color" content="#1a3c5e"/>
+  <style>
+    :root { --primary:#1a3c5e; --accent:#e8a020; --green:#27ae60; --red:#e74c3c;
+            --purple:#7b5ea7; --bg:#f0f4f8; --card:#fff; --text:#2c3e50; --muted:#7f8c8d; }
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { font-family:'Segoe UI',sans-serif; background:var(--bg); color:var(--text); min-height:100vh; }
+    header { background:linear-gradient(135deg,var(--primary),#2c5f8a); color:white;
+             padding:16px 20px; display:flex; align-items:center; justify-content:space-between;
+             box-shadow:0 2px 10px rgba(0,0,0,.2); }
+    header h1 { font-size:1.2rem; font-weight:700; }
+    header h1 span { color:var(--accent); }
+    header p { font-size:.75rem; opacity:.75; margin-top:2px; }
+    .logout-btn { background:rgba(255,255,255,.15); border:1px solid rgba(255,255,255,.3);
+                  color:white; padding:7px 14px; border-radius:20px; font-size:.8rem;
+                  cursor:pointer; text-decoration:none; }
+    main { padding:20px 32px; width:100%; }
+    .legend { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px; }
+    .lc { padding:4px 12px; border-radius:20px; font-size:.72rem; font-weight:600; }
+    .summary { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px; }
+    .sc { padding:6px 14px; border-radius:20px; font-size:.8rem; font-weight:700; }
+    .grid { display:grid; gap:8px; grid-template-columns:repeat(auto-fill,minmax(90px,1fr)); }
+    .card { border-radius:10px; padding:10px 8px; text-align:center; border:2px solid transparent; transition:transform .15s; }
+    .card:hover { transform:translateY(-2px); }
+    .rno  { font-size:1.45rem; font-weight:800; line-height:1; }
+    .rst  { font-size:.6rem; font-weight:700; text-transform:uppercase; letter-spacing:.6px; margin-top:3px; }
+    .rg   { font-size:.65rem; margin-top:5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .rd   { font-size:.6rem; margin-top:1px; opacity:.75; }
+    .rm-occupied  { background:#dbeafe; border-color:#1a3c5e; color:#1a3c5e; }
+    .rm-vacant    { background:#dcfce7; border-color:#27ae60; color:#27ae60; }
+    .rm-dirty     { background:#fef9c3; border-color:#d97706; color:#92400e; }
+    .rm-ooo       { background:#fee2e2; border-color:#e74c3c; color:#c0392b; }
+    .rm-inspect   { background:#f3e8ff; border-color:#7b5ea7; color:#5b21b6; }
+    .rm-departure { background:#ccfbf1; border-color:#0d9488; color:#0f766e; }
+    .rm-houseuse  { background:#f1f5f9; border-color:#94a3b8; color:#475569; }
+    #msg  { text-align:center; padding:40px; color:var(--muted); }
+    .foot { text-align:center; color:var(--muted); font-size:.74rem; margin:24px 0 12px; }
+    @media(max-width:480px){ main{padding:12px;} .grid{grid-template-columns:repeat(3,1fr);} .rno{font-size:1.2rem;} }
+  </style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>&#127968; <span>Himalayan Suite</span> Hotel</h1>
+    <p>Housekeeping &mdash; Room Status</p>
+  </div>
+  <a href="/logout" class="logout-btn">Sign Out</a>
+</header>
+<main>
+  <div class="legend">
+    <span class="lc rm-occupied">Occupied</span>
+    <span class="lc rm-departure">Departure</span>
+    <span class="lc rm-vacant">Vacant</span>
+    <span class="lc rm-dirty">Dirty</span>
+    <span class="lc rm-inspect">Inspect</span>
+    <span class="lc rm-ooo">Out of Order</span>
+    <span class="lc rm-houseuse">House Use</span>
+  </div>
+  <div class="summary" id="summary"></div>
+  <div id="msg">Loading rooms&hellip;</div>
+  <div class="grid" id="grid"></div>
+  <div class="foot" id="foot"></div>
+</main>
+<script>
+async function load() {
+  try {
+    const res  = await fetch('/api/rooms');
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    render(data);
+  } catch(e) {
+    document.getElementById('msg').textContent = '\\u26a0\\ufe0f ' + e.message;
+  }
+}
+function render(rooms) {
+  const cnt = {};
+  rooms.forEach(r => { cnt[r.css] = (cnt[r.css]||0)+1; });
+  const order = [
+    {k:'occupied',l:'Occupied'},{k:'departure',l:'Departure'},
+    {k:'dirty',l:'Dirty'},{k:'inspect',l:'Inspect'},
+    {k:'vacant',l:'Vacant'},{k:'ooo',l:'OOO'},{k:'houseuse',l:'House Use'}
+  ];
+  document.getElementById('summary').innerHTML = order
+    .map(s => cnt[s.k] ? `<span class="sc rm-${s.k}">${cnt[s.k]} ${s.l}</span>` : '')
+    .join('');
+  document.getElementById('grid').innerHTML = rooms.map(r => {
+    const g = r.guest ? `<div class="rg" title="${r.guest}">${r.guest}</div>` : '';
+    const d = r.checkout && (r.css==='occupied'||r.css==='departure') ? `<div class="rd">&#8629; ${r.checkout}</div>` : '';
+    return `<div class="card rm-${r.css}"><div class="rst">${r.label}</div><div class="rno">${r.room}</div>${g}${d}</div>`;
+  }).join('');
+  document.getElementById('msg').style.display = 'none';
+  document.getElementById('foot').textContent = 'Live \\u00b7 Updated: ' + new Date().toLocaleTimeString() + ' \\u2014 auto-refreshes every 2 min';
+}
+load();
+setInterval(load, 120000);
+</script>
+</body>
+</html>"""
 
 def login_required(f):
     @wraps(f)
@@ -484,7 +593,9 @@ def api_bs_to_ad():
 @app.route("/")
 @login_required
 def index():
-    return render_template("index.html", role=session.get('role', 'admin'))
+    if session.get('role') == 'housekeeping':
+        return Response(HOUSEKEEPING_PAGE, content_type='text/html')
+    return render_template("index.html", role='admin')
 
 
 if __name__ == "__main__":
