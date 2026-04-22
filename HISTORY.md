@@ -1,67 +1,30 @@
-# Himalayan Suite — Custom Dashboard
+# Himalayan Suite Hotel — Custom Dashboard
 ### Project History & Status
 
 > **Project location:** `/Users/withamrit/Repos/hms-dashboard/`
-> **NOT related to:** HSJ Helicopter project (`/Users/withamrit/Repos/hsj-heli/`)
+> **GitHub:** `https://github.com/mac-guru/hms-dashboard`
+> **Live URL:** `https://dashboard.himalayansuite.com`
 
 ---
 
 ## What This Project Is
 
-A custom web dashboard for **Himalayan Suite hotel** that reads data directly from the hotel's HMS (Himalayan Suite Hotel Management Software) database and displays it in a clean, real-time web interface accessible from any browser — including your phone from another city.
+A custom web dashboard for **Himalayan Suite Hotel** that reads data directly from the hotel's HMS (Hotel Management Software) database and displays it in a clean, real-time web interface — accessible from any browser, phone, or device, anywhere in the world.
 
 ---
 
-## The Journey (How We Got Here)
-
-### Phase 1 — Trying to find an API
-- Himalayan Suite HMS has **no public REST API**
-- Investigated the ASP.NET WebForms app at `http://172.16.10.10:8982/himalayansuite`
-- Found ONE real JSON endpoint: `Dashboard.aspx/GetActivityList` (used for activity feed)
-- Everything else required HTML scraping
-
-### Phase 2 — HTML Scraping (first working version)
-Built a Flask app that:
-- Logged into HMS using session cookies + ViewState
-- Scraped `AuditSummary.aspx` for revenue data
-- Scraped `RoomRack` page for room status
-- Scraped `RoomDashboard.aspx` for guest list
-- Scraped `DashboardVishuwa.aspx` for front desk counts
-
-**Problems with scraping:**
-- Room total showed 25 (wrong) — only counted OCC + VAC, missed OOO/OOS
-- Revenue total didn't match printed reports (missing walk-in cash sales)
-- Slow (had to login + load multiple pages per request)
-- Could break if HMS updates its HTML
-
-### Phase 3 — Direct Database Connection (current)
-- Accessed Windows server via **AnyDesk**
-- Found **SQL Server Express** running on the same machine (`172.16.10.10`)
-- Enabled **TCP/IP** in SQL Server Configuration Manager
-- Set **static port 1433** (was using random port 58623)
-- Enabled **SQL Server Browser** service
-- Opened **Windows Firewall** for port 1433
-- Connected directly from Mac using `pymssql`
-
-**Database details:**
-```
-Server:   172.16.10.10, port 1433
-Instance: SQLexpress
-Database: hotel
-User:     sa
-Password: webbook@321
-```
-
----
-
-## Current Architecture
+## Architecture
 
 ```
-Your Mac (localhost:5055)
-    └── Flask app (app.py)
-            ├── /api/dashboard  ──→  SQL Server (172.16.10.10:1433) → hotel DB
-            ├── /api/activity   ──→  HMS Web scraping (activity feed only)
-            └── /               ──→  templates/index.html
+Browser / iPhone (anywhere)
+        ↓ HTTPS
+https://dashboard.himalayansuite.com
+        ↓ Cloudflare (SSL + proxy)
+110.44.123.234:80 (port forward)
+        ↓ MikroTik router
+172.16.10.10:5055 (Flask / waitress — Windows server)
+        ↓ localhost
+SQL Server Express (172.16.10.10:1433) → hotel database
 ```
 
 ---
@@ -71,34 +34,114 @@ Your Mac (localhost:5055)
 | File | Purpose |
 |------|---------|
 | `app.py` | Flask backend — all API routes |
-| `templates/index.html` | Frontend dashboard UI |
+| `templates/index.html` | Frontend dashboard — tabbed UI |
+| `templates/login.html` | Login page |
+| `static/manifest.json` | PWA manifest (installable as phone app) |
+| `static/icons/` | App icons (192×192, 512×512) |
+| `requirements.txt` | Python dependencies |
+| `render.yaml` | Render.com deployment config (unused) |
 | `HISTORY.md` | This file |
 
 ---
 
-## Key Database Tables Used
+## Infrastructure
 
-| Table | What it contains |
-|-------|-----------------|
-| `Audit` | Night audit — ALL revenue & occupancy metrics (today / MTD / YTD) |
-| `Rooms` | Live room status (Occupied, Vacant, Dirty, OOO, etc.) |
-| `RmAvl` | Room status code definitions |
-| `Bills` | All hotel bills — used for in-house guest list |
-| `Guests` | Guest master records (names) |
-| `FRSVDet` | Reservation details — arrivals & departures |
-| `FRSVHDR` | Reservation header records |
+### Windows Server (`172.16.10.10`)
+- **OS:** Windows Server 2019
+- **SQL Server Express:** port 1433 — hotel database
+- **Flask app:** runs as Windows service via **NSSM**
+  - Service name: `HMSDashboard`
+  - Start command: `waitress-serve --port=5055 app:app`
+  - App directory: `C:\hms-dashboard`
+  - Auto-starts on boot
+- **Auto-deploy:** Windows Task Scheduler runs `C:\hms-update.ps1` every 1 minute
+  - Downloads latest zip from GitHub → extracts → restarts service
+  - **No AnyDesk needed to deploy updates**
+
+### MikroTik Router
+| Rule | Type | External Port | Internal |
+|------|------|--------------|---------|
+| HMS Web | dstnat | 8982 | 172.16.10.10:8982 |
+| HMS Dashboard | dstnat | 5055 | 172.16.10.10:5055 |
+| HMS Dashboard HTTP | dstnat | 80 | 172.16.10.10:5055 |
+| Hairpin NAT | srcnat | — | 172.16.10.0/24 → masquerade |
+| Block guest hotspot | filter/drop | — | 10.5.35.0/24 blocked |
+
+### Cloudflare DNS (`himalayansuite.com`)
+| Record | Type | Value | Proxy |
+|--------|------|-------|-------|
+| `dashboard` | A | `110.44.123.234` | ✅ Orange (proxied) |
+
+- SSL mode: **Flexible** (configuration rule for `dashboard.himalayansuite.com`)
+- Main site SSL: **Full** (unchanged)
+
+### Windows Firewall
+- Port `5055` open (TCP inbound) — rule name: `HMS Dashboard`
 
 ---
 
-## Dashboard Sections
+## Database
 
-1. **Room Status** — Occupied / Vacant / Arrivals today / Departures today
-2. **Front Desk** — Reservations / Checked-in / Total guests
-3. **Occupancy** — Today % / Yesterday % / MTD % / PAX
-4. **Key Metrics** — ADR / RevPAR (today and yesterday)
-5. **Revenue Breakdown** — Room Sales, Meal Plan, Food, Beverage, SPA, Laundry, Misc, Total (today / yesterday / MTD / YTD)
-6. **In-house Guest List** — Room, Name, Plan, Type, Arrival, Departure, Status
-7. **Activity Feed** — Real-time check-ins, restaurant bills, SPA, purchases
+```
+Server:   172.16.10.10, port 1433
+Instance: SQLexpress
+Database: hotel
+User:     sa
+Password: webbook@321
+```
+
+### Key Tables Used
+
+| Table | Purpose |
+|-------|---------|
+| `Bills` | All hotel charges — primary source for revenue & occupancy |
+| `Audit` | Night audit snapshot (revenue / occupancy _T/_M/_Y columns) |
+| `Rooms` | Live room rack status |
+| `RmAvl` | Room status code definitions |
+| `Guests` | Guest master records |
+| `FRSVDet` | Reservation details |
+| `FRSVHDR` | Reservation headers |
+
+---
+
+## Dashboard Features
+
+### Tabs
+1. **Occupancy** — Today % / Yesterday % / This Month (MTD) % / Fiscal Year %
+2. **Revenue** — Today vs Yesterday: Room Sales, Meal Plan, Room Revenue subtotal, Food, Beverage, Restaurant Sales subtotal, SPA/Transport, Laundry, Misc, Total
+
+### Date Navigation
+- ◀ ▶ arrow buttons — go back/forward one day
+- Date picker — jump to any date
+- Today button — return to current date
+
+### Other
+- Login protected (`amrit` / `Nepal@213`)
+- Auto-refreshes every 5 minutes (today only)
+- Installable as PWA on iPhone (Add to Home Screen in Safari)
+- Responsive — works on phone and desktop
+
+---
+
+## How to Deploy Updates
+
+On your **Mac** (edit code, then):
+```bash
+cd /Users/withamrit/Repos/hms-dashboard
+git add -A
+git commit -m "describe your change"
+git push
+```
+The Windows server picks it up automatically within **1 minute**. No AnyDesk needed.
+
+---
+
+## How to Restart the Service Manually (if needed)
+
+Via AnyDesk on Windows server, open Command Prompt:
+```
+C:\nssm\nssm-2.24\win64\nssm.exe restart HMSDashboard
+```
 
 ---
 
@@ -106,63 +149,55 @@ Your Mac (localhost:5055)
 
 | Config | Value |
 |--------|-------|
-| Total rooms | **27** (set as `TOTAL_ROOMS = 27` in app.py) |
+| Total rooms | **27** (`TOTAL_ROOMS = 27` in app.py) |
+| Fiscal year start | **July 17, 2025** |
+| Dashboard URL | `https://dashboard.himalayansuite.com` |
 | HMS internal URL | `http://172.16.10.10:8982/himalayansuite` |
 | HMS public URL | `http://110.44.123.234:8982/himalayansuite` |
-| Dashboard URL | `http://localhost:5055` |
-| HMS login | user: `amrit` / pass: `Nepal@213` |
+| Dashboard login | user: `amrit` / pass: `Nepal@213` |
+| GitHub repo | `https://github.com/mac-guru/hms-dashboard` |
 
 ---
 
-## How to Run
+## Key Technical Decisions
 
-```bash
-cd /Users/withamrit/Repos/hms-dashboard
-python3 app.py
-```
-
-Then open: `http://localhost:5055`
-
----
-
-## How to Access from Phone / Another City
-
-**Option A — Cloudflare Tunnel (quick, free):**
-```bash
-brew install cloudflared
-cloudflared tunnel --url http://localhost:5055
-```
-Copy the URL it gives you → open on phone.
-**Requires:** Mac must be on and connected to office network.
-
-**Option B — Deploy to cloud (permanent):**
-- Change `HMS_URL` in app.py to `http://110.44.123.234:8982/himalayansuite`
-- Deploy to Render.com (free) → always accessible, Mac doesn't need to be on
+| Decision | Why |
+|----------|-----|
+| Bills table (not Audit) for revenue | Audit = snapshot at midnight; Bills = live including post-audit entries |
+| `COUNT(BillRmNo)` not `COUNT(DISTINCT BillRmNo)` | Matches HMS report — counts day-use + overnight separately (allows >100%) |
+| FX conversion for OTA rooms | Rooms 302/303/306/406 billed in USD; `BillRC × BillFxRate` for NPR |
+| BillCode `SPA` = Flight/Transport | Confusingly named in HMS; mapped to "SPA / Transport" in dashboard |
+| Flask on Windows server | Zero cloud cost; server always on; 1-hop latency (faster than cloud) |
+| NSSM for service management | Runs Flask as Windows service with auto-restart and boot start |
+| Cloudflare proxy | Free SSL, no cert needed on origin server |
 
 ---
 
-## Known Issues / Improvements To Do
-
-- [ ] Guest list sometimes shows duplicate rows (same guest, multiple bill rows)
-- [ ] Revenue "today" from Audit table = previous night's audit. Live intra-day revenue requires querying Bills table directly
-- [ ] Activity feed still uses HTML scraping (the only part not yet on DB)
-- [ ] No authentication on the dashboard (anyone with the URL can see it)
-- [ ] Auto-start on Mac boot not configured yet
-
----
-
-## What Was Fixed During Build
+## Bug Fixes History
 
 | Bug | Fix |
 |-----|-----|
-| Total rooms showed 25 | Added `TOTAL_ROOMS = 27` constant, stopped summing OCC+VAC |
-| Revenue didn't match printed report | Switched from AuditSummary scraping to direct Audit table query |
-| SQL Server not reachable | Enabled TCP/IP, set static port 1433, opened Windows Firewall |
-| `g.status` JS error | Old scraping returned `status` field; updated HTML to derive status from arrival/departure dates |
-| `fd.reservations` JS error | Added `frontdesk` object back to API response |
-| `plan` SQL reserved word error | Renamed alias to `meal_plan` |
-| Guest list empty | `BillVoid = 0` was wrong; changed to `BillVoid IS NULL OR BillVoid = 0` |
+| Total rooms showed 25 | Added `TOTAL_ROOMS = 27` constant |
+| Revenue didn't match printed report | Switched from Audit table to Bills table with FX conversion |
+| OTA room revenue wrong | Multiply `BillRC × BillFxRate` for USD rooms |
+| SPA/Transport showed 0 | No `SPL` BillCode exists; use `SPA` BillCode instead |
+| Occupancy showed 18 instead of 19 | Use Bills `COUNT(BillRmNo)` instead of Audit `Occ_T` |
+| Occupancy capped at 100% | Removed `DISTINCT` — count all RC transactions per day |
+| Date nav went back 2 days | Fixed timezone bug — replaced `toISOString()` with local date formatter |
+| Next button always disabled | Same timezone bug in comparison — fixed with `getToday()` helper |
+| Guest list empty | `BillVoid = 0` wrong; changed to `BillVoid IS NULL OR BillVoid = 0` |
+| Service wouldn't start (NSSM) | Wrong Python path — used `where waitress-serve` to find correct path |
 
 ---
 
-*Last updated: April 21, 2026*
+## Phase Roadmap
+
+- [x] Phase 1 — Revenue section matching printed night audit report
+- [x] Phase 2 — Occupancy matching HMS Room Occupancy History report
+- [x] Phase 3 — Deployed to Windows server, accessible from anywhere
+- [x] Phase 4 — Login, PWA (installable on iPhone), HTTPS via Cloudflare
+- [ ] Phase 5 — Additional sections (guest list, arrivals/departures, etc.)
+
+---
+
+*Last updated: April 22, 2026*
