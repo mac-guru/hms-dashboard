@@ -317,9 +317,11 @@
 </div>
 
 <div id="error-msg"></div>
+{% if role != 'housekeeping' %}
 <div id="loading"><div class="spinner"></div><div>Fetching hotel data…</div></div>
+{% endif %}
 
-<main id="main-content" style="display:none">
+<main id="main-content" style="{% if role == 'housekeeping' %}display:block{% else %}display:none{% endif %}">
 
   {% if role != 'housekeeping' %}
   <!-- Occupancy Tab -->
@@ -526,8 +528,6 @@ document.addEventListener('DOMContentLoaded', () => {
   picker.value = getToday();
   loadData();
   {% else %}
-  document.getElementById('loading').style.display = 'none';
-  document.getElementById('main-content').style.display = 'block';
   loadRooms();
   {% endif %}
 });
