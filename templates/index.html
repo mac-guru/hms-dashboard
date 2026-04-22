@@ -568,7 +568,6 @@ function renderDashboard(d) {
   document.getElementById('revenue-body').innerHTML = rows;
 
   // ── Cash Received ──
-  const fmt = n => Math.round(n).toLocaleString('en-IN');
   document.getElementById('cash-today').textContent    = fmt(d.cash.today);
   document.getElementById('cash-mtd').textContent      = fmt(d.cash.mtd);
   document.getElementById('cash-mtd-label').textContent = d.cash.mtd_label;
