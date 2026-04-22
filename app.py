@@ -116,20 +116,21 @@ def api_dashboard():
         """, (selected.date(), selected.date()))
         rsv = cur.fetchone() or {}
 
-        # ── In-house Guest List ──────────────────────────
+        # ── In-house Guest List (one row per room, deduped) ──
         cur.execute("""
-            SELECT TOP 20
-                ISNULL(g.GName, ISNULL(b.BillGuestName,'')) as name,
-                ISNULL(b.BillRmNo,'')   as room,
-                ISNULL(b.BillPlan,'')   as meal_plan,
-                ISNULL(b.BillRmOcc,'')  as occ_type,
-                b.BillRmArrDate         as arrival,
-                b.BillRmDepDate         as departure
+            SELECT
+                b.BillRmNo                                          AS room,
+                MAX(ISNULL(g.GName, ISNULL(b.BillGuestName, '')))  AS name,
+                MAX(ISNULL(b.BillPlan, ''))                        AS meal_plan,
+                MIN(b.BillRmArrDate)                               AS arrival,
+                MAX(b.BillRmDepDate)                               AS departure
             FROM Bills b
             LEFT JOIN Guests g ON g.GId = b.BillGId
             WHERE b.BillCleared = 0
               AND (b.BillVoid IS NULL OR b.BillVoid = 0)
-              AND b.BillRmNo  != ''
+              AND b.BillRmNo IS NOT NULL
+              AND b.BillRmNo != ''
+            GROUP BY b.BillRmNo
             ORDER BY b.BillRmNo
         """)
         guests_raw = cur.fetchall()
@@ -304,16 +305,27 @@ def api_dashboard():
         y_occ = rooms_yest
 
         # ── Format guests ────────────────────────────────
+        today_date = datetime.now().date()
         guests = []
         for g in guests_raw:
+            arr = g["arrival"].date()  if g["arrival"]  else None
+            dep = g["departure"].date() if g["departure"] else None
+            total_nights = (dep - arr).days       if arr and dep else None
+            remaining    = (dep - today_date).days if dep        else None
             guests.append({
-                "name":      g["name"],
-                "room":      g["room"],
-                "plan":      g["meal_plan"],
-                "type":      g["occ_type"],
-                "arrival":   g["arrival"].strftime("%Y-%m-%d") if g["arrival"] else "",
-                "departure": g["departure"].strftime("%Y-%m-%d") if g["departure"] else "",
+                "name":         g["name"],
+                "room":         g["room"],
+                "plan":         g["meal_plan"],
+                "arrival":      arr.strftime("%b %d")    if arr else "",
+                "departure":    dep.strftime("%b %d")    if dep else "",
+                "total_nights": total_nights,
+                "remaining":    remaining,
             })
+        # Sort: departing today first, then by room number
+        guests.sort(key=lambda x: (
+            0 if x["remaining"] == 0 else (1 if x["remaining"] == 1 else 2),
+            x["room"]
+        ))
 
         return jsonify({
             "date":         selected.strftime("%A, %B %d, %Y"),
