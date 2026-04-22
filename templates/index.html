@@ -224,13 +224,13 @@
         <div class="occ-bar-wrap"><div class="occ-bar" id="bar-yest"></div></div>
       </div>
       <div class="stat-card orange">
-        <div class="stat-label">This Month</div>
+        <div class="stat-label" id="lbl-mtd">This Month</div>
         <div class="stat-value" id="occ-mtd-pct">—</div>
         <div class="stat-sub" id="occ-mtd-sub">—</div>
         <div class="occ-bar-wrap"><div class="occ-bar orange" id="bar-mtd"></div></div>
       </div>
       <div class="stat-card purple">
-        <div class="stat-label">Fiscal Year</div>
+        <div class="stat-label" id="lbl-fy">Fiscal Year</div>
         <div class="stat-value" id="occ-fy-pct">—</div>
         <div class="stat-sub" id="occ-fy-sub">—</div>
         <div class="occ-bar-wrap"><div class="occ-bar purple" id="bar-fy"></div></div>
@@ -373,13 +373,15 @@ function renderDashboard(d) {
   document.getElementById('occ-yest-sub').textContent  = `${o.yesterday} / ${r.total} rooms · ${fmt(o.yest_pax)} pax`;
   document.getElementById('bar-yest').style.width = o.yest_pct + '%';
 
+  document.getElementById('lbl-mtd').textContent     = o.mtd_label;
   document.getElementById('occ-mtd-pct').textContent = o.mtd_pct + '%';
-  document.getElementById('occ-mtd-sub').textContent  = `${fmt(o.mtd_rooms)} / ${fmt(o.mtd_avail)} room-nights`;
-  document.getElementById('bar-mtd').style.width = o.mtd_pct + '%';
+  document.getElementById('occ-mtd-sub').textContent = `${fmt(o.mtd_rooms)} / ${fmt(o.mtd_avail)} room-nights`;
+  document.getElementById('bar-mtd').style.width     = Math.min(o.mtd_pct, 100) + '%';
 
-  document.getElementById('occ-fy-pct').textContent = o.fy_pct + '%';
+  document.getElementById('lbl-fy').textContent      = o.fy_label;
+  document.getElementById('occ-fy-pct').textContent  = o.fy_pct + '%';
   document.getElementById('occ-fy-sub').textContent  = `${fmt(o.fy_rooms)} / ${fmt(o.fy_avail)} room-nights`;
-  document.getElementById('bar-fy').style.width = o.fy_pct + '%';
+  document.getElementById('bar-fy').style.width      = Math.min(o.fy_pct, 100) + '%';
 
   const updTime = new Date().toLocaleTimeString();
   const updNote = isToday ? `Last updated: ${updTime} — auto-refreshes every 5 min` : `Historical view · ${d.date}`;

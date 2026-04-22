@@ -2,6 +2,7 @@ from flask import Flask, jsonify, render_template, request, session, redirect, u
 from functools import wraps
 import pymssql, requests, re, json, os
 from datetime import datetime, timedelta
+from nepali_datetime import date as NepaliDate
 
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'hms-dashboard-key-2025')
@@ -176,24 +177,38 @@ def api_dashboard():
         rooms_today = bills_room_count(selected.date())
         rooms_yest  = bills_room_count(previous.date())
 
-        # ── MTD room-nights from Bills ───────────────────
+        # ── Convert selected date to Nepali (BS) ─────────
+        selected_bs  = NepaliDate.from_datetime_date(selected.date())
+
+        # MTD: 1st of selected BS month → selected date
+        mtd_start_bs = NepaliDate(selected_bs.year, selected_bs.month, 1)
+        mtd_start_ad = mtd_start_bs.to_datetime_date()
+        mtd_days     = (selected.date() - mtd_start_ad).days + 1
+        mtd_avail_bs = TOTAL_ROOMS * mtd_days
+
         cur.execute("""
             SELECT ISNULL(SUM(dc), 0) as total
             FROM (
                 SELECT CAST(BillDt AS DATE) as d, COUNT(BillRmNo) as dc
                 FROM Bills
-                WHERE YEAR(BillDt) = %s AND MONTH(BillDt) = %s
+                WHERE CAST(BillDt AS DATE) >= %s
+                  AND CAST(BillDt AS DATE) <= %s
                   AND BillCode = 'RC'
                   AND (BillVoid IS NULL OR BillVoid = 0)
                 GROUP BY CAST(BillDt AS DATE)
             ) x
-        """, (selected.year, selected.month))
+        """, (mtd_start_ad, selected.date()))
         mtd_room_nights = int((cur.fetchone() or {}).get('total') or 0)
 
-        # ── Fiscal year room-nights from Bills (FY starts July 17) ──
-        fy_start = datetime(2025, 7, 17).date()
-        fy_days  = (selected.date() - fy_start).days + 1
-        fy_avail = TOTAL_ROOMS * fy_days
+        # FY: Shrawan 1 (BS month 4) of selected date's fiscal year → selected date
+        if selected_bs.month >= 4:   # Shrawan or later → FY started this BS year
+            fy_start_bs = NepaliDate(selected_bs.year, 4, 1)
+        else:                         # Before Shrawan → FY started previous BS year
+            fy_start_bs = NepaliDate(selected_bs.year - 1, 4, 1)
+        fy_start  = fy_start_bs.to_datetime_date()
+        fy_days   = (selected.date() - fy_start).days + 1
+        fy_avail  = TOTAL_ROOMS * fy_days
+
         cur.execute("""
             SELECT ISNULL(SUM(dc), 0) as total
             FROM (
@@ -313,11 +328,13 @@ def api_dashboard():
                 "today_pax":     fv(t.get("Pax_T")),
                 "yest_pax":      fv(y.get("Pax_T")),
                 "mtd_rooms":     mtd_room_nights,
-                "mtd_avail":     mtd_avail,
-                "mtd_pct":       round(mtd_room_nights / mtd_avail * 100, 1) if mtd_avail else 0,
+                "mtd_avail":     mtd_avail_bs,
+                "mtd_pct":       round(mtd_room_nights / mtd_avail_bs * 100, 1) if mtd_avail_bs else 0,
                 "fy_rooms":      fy_room_nights,
                 "fy_avail":      fy_avail,
                 "fy_pct":        round(fy_room_nights / fy_avail * 100, 1) if fy_avail else 0,
+                "mtd_label":     f"{selected_bs.strftime('%B')} {selected_bs.year} (MTD)",
+                "fy_label":      f"FY {fy_start_bs.year}/{fy_start_bs.year + 1}",
             },
             "revenue": revenue,
             "guests":  guests,
