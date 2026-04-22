@@ -373,6 +373,60 @@ def api_activity():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/debug-cash")
+@login_required
+def api_debug_cash():
+    """Temporary: explore DB for payment/receipt tables and bill codes."""
+    try:
+        conn = pymssql.connect(**DB)
+        cur  = conn.cursor(as_dict=True)
+
+        # All tables in the hotel database
+        cur.execute("""
+            SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES
+            WHERE TABLE_TYPE='BASE TABLE'
+            ORDER BY TABLE_NAME
+        """)
+        tables = [r['TABLE_NAME'] for r in cur.fetchall()]
+
+        # All distinct BillCodes in Bills (to spot payment codes)
+        cur.execute("""
+            SELECT DISTINCT BillCode, COUNT(*) AS cnt
+            FROM Bills
+            GROUP BY BillCode
+            ORDER BY cnt DESC
+        """)
+        bill_codes = cur.fetchall()
+
+        # Sample rows from any table whose name looks like payments/receipts
+        pay_samples = {}
+        for t in tables:
+            tl = t.lower()
+            if any(k in tl for k in ['pay','rcpt','receipt','cash','settle','collect']):
+                try:
+                    cur.execute(f"SELECT TOP 3 * FROM [{t}]")
+                    pay_samples[t] = cur.fetchall()
+                    # Also get column names
+                    cur.execute(f"""
+                        SELECT COLUMN_NAME, DATA_TYPE
+                        FROM INFORMATION_SCHEMA.COLUMNS
+                        WHERE TABLE_NAME = %s
+                        ORDER BY ORDINAL_POSITION
+                    """, (t,))
+                    pay_samples[t + '__cols'] = [r['COLUMN_NAME'] for r in cur.fetchall()]
+                except Exception as ex:
+                    pay_samples[t] = str(ex)
+
+        conn.close()
+        return jsonify({
+            "tables": tables,
+            "bill_codes": bill_codes,
+            "payment_table_samples": pay_samples,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/bs-to-ad")
 @login_required
 def api_bs_to_ad():
