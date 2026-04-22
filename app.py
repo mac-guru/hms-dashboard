@@ -152,8 +152,17 @@ def api_dashboard():
                 LTRIM(RTRIM(ISNULL(h.RsvHdrRqBy, ''))) AS checked_in_by,
                 LTRIM(RTRIM(ISNULL(h.RsvHdrAgt, '')))  AS bill_to_full,
                 ISNULL(
-                    (SELECT TOP 1 ISNULL(RsvRmRate, 0) FROM FRSVDet
-                     WHERE RsvDetHdrId = g.GRsvHdrId AND RsvDetStat = 'open'),
+                    (SELECT TOP 1
+                        CASE WHEN BillCurr NOT IN ('NRS') AND BillCurr IS NOT NULL
+                             THEN ISNULL(BillRC, 0) * ISNULL(BillFxRate, 1)
+                             ELSE ISNULL(BillRC, 0)
+                        END
+                     FROM Bills
+                     WHERE BillRmNo = g.GRmNo
+                       AND BillCode = 'RC'
+                       AND BillCleared = 0
+                       AND (BillVoid IS NULL OR BillVoid = 0)
+                     ORDER BY BillDt DESC),
                     0
                 ) AS room_rate
             FROM Guests g
