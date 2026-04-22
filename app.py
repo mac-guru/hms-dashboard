@@ -144,6 +144,24 @@ def api_dashboard():
         b_today = bills_revenue(selected.date())
         b_yest  = bills_revenue(previous.date())
 
+        # ── Cash Received (ACR = advance receipts, PMT CASH = checkout cash) ──
+        def cash_received(date_from, date_to):
+            cur.execute("""
+                SELECT ISNULL(SUM(BillTot), 0) AS cash
+                FROM Bills
+                WHERE CAST(BillDt AS DATE) >= %s
+                  AND CAST(BillDt AS DATE) <= %s
+                  AND (BillVoid IS NULL OR BillVoid = 0)
+                  AND (
+                      BillCode = 'ACR'
+                      OR (BillCode = 'PMT' AND BillDes LIKE 'CASH%')
+                  )
+            """, (date_from, date_to))
+            row = cur.fetchone()
+            return float((row or {}).get('cash') or 0)
+
+        cash_today = cash_received(selected.date(), selected.date())
+
         # ── Room count from Bills (matches printed report, includes day-use) ──
         def bills_room_count(date):
             cur.execute("""
@@ -223,6 +241,9 @@ def api_dashboard():
             ) x
         """, (fy_start, fy_end))
         fy_room_nights = int((cur.fetchone() or {}).get('total') or 0)
+
+        # MTD cash (same BS-month logic as occupancy MTD)
+        cash_mtd = cash_received(mtd_start_ad, mtd_end)
 
         conn.close()
 
@@ -330,6 +351,11 @@ def api_dashboard():
                 "fy_label":      f"FY {fy_start_bs.year}/{fy_start_bs.year + 1}",
             },
             "revenue": revenue,
+            "cash": {
+                "today": round(cash_today),
+                "mtd":   round(cash_mtd),
+                "mtd_label": f"{selected_bs.strftime('%B')} {selected_bs.year}",
+            },
         })
 
     except Exception as e:
@@ -369,58 +395,6 @@ def api_activity():
                     "timeago": item.get("timeago", ""),
                 })
         return jsonify(all_items)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-
-@app.route("/api/debug-cash")
-@login_required
-def api_debug_cash():
-    """Temporary: find every BillCode/description contributing to today's cash total."""
-    try:
-        conn = pymssql.connect(**DB)
-        cur  = conn.cursor(as_dict=True)
-
-        # Every BillCode + description group for today — sorted by total descending
-        cur.execute("""
-            SELECT
-                BillCode,
-                BillDes,
-                COUNT(*) AS cnt,
-                SUM(ISNULL(BillTot,0))   AS tot_BillTot,
-                SUM(ISNULL(BillCrAmt,0)) AS tot_BillCrAmt
-            FROM Bills
-            WHERE CAST(BillDt AS DATE) = CAST(GETDATE() AS DATE)
-              AND (BillVoid IS NULL OR BillVoid = 0)
-            GROUP BY BillCode, BillDes
-            ORDER BY tot_BillTot DESC
-        """)
-        today_breakdown = cur.fetchall()
-
-        # ACR code samples — what is it?
-        cur.execute("""
-            SELECT TOP 5 BillCode, BillDes, BillTot, BillCrAmt, BillPmode, BillDt, BillVoucherNo
-            FROM Bills
-            WHERE BillCode = 'ACR'
-            ORDER BY BillDt DESC
-        """)
-        acr_samples = cur.fetchall()
-
-        # CR code samples
-        cur.execute("""
-            SELECT TOP 5 BillCode, BillDes, BillTot, BillCrAmt, BillPmode, BillDt, BillVoucherNo
-            FROM Bills
-            WHERE BillCode = 'CR'
-            ORDER BY BillDt DESC
-        """)
-        cr_samples = cur.fetchall()
-
-        conn.close()
-        return jsonify({
-            "today_breakdown": today_breakdown,
-            "acr_samples":     acr_samples,
-            "cr_samples":      cr_samples,
-        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
