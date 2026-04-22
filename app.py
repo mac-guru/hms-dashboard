@@ -178,12 +178,19 @@ def api_dashboard():
         rooms_yest  = bills_room_count(previous.date())
 
         # ── Convert selected date to Nepali (BS) ─────────
+        today_bs     = NepaliDate.from_datetime_date(datetime.now().date())
         selected_bs  = NepaliDate.from_datetime_date(selected.date())
 
-        # MTD: 1st of selected BS month → selected date
+        # ── MTD ───────────────────────────────────────────
+        # If selected date is in the same BS month as today → end = today (MTD doesn't move)
+        # If selected date is in a different BS month → end = selected date
+        same_bs_month = (selected_bs.year  == today_bs.year and
+                         selected_bs.month == today_bs.month)
+        mtd_end      = datetime.now().date() if same_bs_month else selected.date()
+
         mtd_start_bs = NepaliDate(selected_bs.year, selected_bs.month, 1)
         mtd_start_ad = mtd_start_bs.to_datetime_date()
-        mtd_days     = (selected.date() - mtd_start_ad).days + 1
+        mtd_days     = (mtd_end - mtd_start_ad).days + 1
         mtd_avail_bs = TOTAL_ROOMS * mtd_days
 
         cur.execute("""
@@ -197,17 +204,29 @@ def api_dashboard():
                   AND (BillVoid IS NULL OR BillVoid = 0)
                 GROUP BY CAST(BillDt AS DATE)
             ) x
-        """, (mtd_start_ad, selected.date()))
+        """, (mtd_start_ad, mtd_end))
         mtd_room_nights = int((cur.fetchone() or {}).get('total') or 0)
 
-        # FY: Shrawan 1 (BS month 4) of selected date's fiscal year → selected date
-        if selected_bs.month >= 4:   # Shrawan or later → FY started this BS year
-            fy_start_bs = NepaliDate(selected_bs.year, 4, 1)
-        else:                         # Before Shrawan → FY started previous BS year
-            fy_start_bs = NepaliDate(selected_bs.year - 1, 4, 1)
-        fy_start  = fy_start_bs.to_datetime_date()
-        fy_days   = (selected.date() - fy_start).days + 1
-        fy_avail  = TOTAL_ROOMS * fy_days
+        # ── Fiscal Year ───────────────────────────────────
+        # FY starts Shrawan 1 (BS month 4)
+        def get_fy_start_bs(bs_date):
+            if bs_date.month >= 4:
+                return NepaliDate(bs_date.year, 4, 1)
+            else:
+                return NepaliDate(bs_date.year - 1, 4, 1)
+
+        selected_fy_start_bs = get_fy_start_bs(selected_bs)
+        today_fy_start_bs    = get_fy_start_bs(today_bs)
+
+        # If selected date is in the same fiscal year as today → end = today (FY doesn't move)
+        # If selected date is in a different fiscal year → end = selected date
+        same_fy  = (selected_fy_start_bs.year == today_fy_start_bs.year)
+        fy_end   = datetime.now().date() if same_fy else selected.date()
+
+        fy_start_bs = selected_fy_start_bs
+        fy_start    = fy_start_bs.to_datetime_date()
+        fy_days     = (fy_end - fy_start).days + 1
+        fy_avail    = TOTAL_ROOMS * fy_days
 
         cur.execute("""
             SELECT ISNULL(SUM(dc), 0) as total
@@ -220,7 +239,7 @@ def api_dashboard():
                   AND (BillVoid IS NULL OR BillVoid = 0)
                 GROUP BY CAST(BillDt AS DATE)
             ) x
-        """, (fy_start, selected.date()))
+        """, (fy_start, fy_end))
         fy_room_nights = int((cur.fetchone() or {}).get('total') or 0)
 
         conn.close()
@@ -281,10 +300,8 @@ def api_dashboard():
         })
 
         # ── Occupancy metrics ────────────────────────────
-        t_occ     = rooms_today
-        y_occ     = rooms_yest
-        mtd_days  = selected.day
-        mtd_avail = TOTAL_ROOMS * mtd_days
+        t_occ = rooms_today
+        y_occ = rooms_yest
 
         # ── Format guests ────────────────────────────────
         guests = []
