@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Himalayan Suite — Dashboard</title>
+  <style>
+    :root {
+      --primary: #1a3c5e;
+      --accent:  #e8a020;
+      --green:   #27ae60;
+      --red:     #e74c3c;
+      --bg:      #f0f4f8;
+      --card:    #ffffff;
+      --text:    #2c3e50;
+      --muted:   #7f8c8d;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); }
+
+    header {
+      background: linear-gradient(135deg, var(--primary), #2c5f8a);
+      color: white; padding: 16px 28px;
+      display: flex; align-items: center; justify-content: space-between;
+      box-shadow: 0 2px 8px rgba(0,0,0,.25);
+    }
+    header h1 { font-size: 1.4rem; font-weight: 700; letter-spacing: .5px; }
+    header h1 span { color: var(--accent); }
+    #date-label { font-size: .85rem; opacity: .85; }
+    .header-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    #date-picker {
+      padding: 7px 12px; border-radius: 20px; border: none;
+      font-size: .85rem; color: var(--text); cursor: pointer;
+      background: rgba(255,255,255,.92);
+    }
+    #refresh-btn, #go-btn {
+      background: var(--accent); border: none; color: white;
+      padding: 8px 18px; border-radius: 20px; cursor: pointer;
+      font-size: .85rem; font-weight: 600; transition: .2s;
+    }
+    #go-btn { background: #27ae60; }
+    #go-btn:hover { background: #219a52; }
+    #refresh-btn:hover { background: #d4901c; }
+    #refresh-btn:disabled, #go-btn:disabled { opacity: .6; cursor: not-allowed; }
+    #today-btn {
+      background: rgba(255,255,255,.2); border: 1px solid rgba(255,255,255,.4);
+      color: white; padding: 7px 14px; border-radius: 20px; cursor: pointer;
+      font-size: .82rem; transition: .2s;
+    }
+    #today-btn:hover { background: rgba(255,255,255,.3); }
+
+    main { padding: 20px 24px; max-width: 900px; margin: 0 auto; }
+
+    #loading {
+      display: flex; align-items: center; justify-content: center;
+      height: 60vh; flex-direction: column; gap: 16px; color: var(--muted);
+    }
+    .spinner {
+      width: 48px; height: 48px; border: 5px solid #ddd;
+      border-top-color: var(--primary); border-radius: 50%;
+      animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .section-title {
+      font-size: 1rem; font-weight: 700; color: var(--primary);
+      margin: 24px 0 12px; text-transform: uppercase;
+      letter-spacing: .8px; display: flex; align-items: center; gap: 8px;
+    }
+    .section-title::after { content: ''; flex: 1; height: 2px; background: #e0e8f0; }
+
+    .table-card {
+      background: var(--card); border-radius: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,.07); overflow: hidden;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: .88rem; }
+    th {
+      background: var(--primary); color: white; padding: 11px 14px;
+      text-align: left; font-weight: 600; font-size: .8rem;
+      text-transform: uppercase; letter-spacing: .5px;
+    }
+    th.right, td.right { text-align: right; }
+    td { padding: 10px 14px; border-bottom: 1px solid #f0f0f0; }
+    tr:last-child td { border-bottom: none; font-weight: 700; background: #f7f9fc; }
+    tr:hover td { background: #f5f8ff; }
+    tr.subtotal td { background: #eef4fb; font-weight: 600; font-style: italic; color: var(--primary); border-top: 1px solid #c8d8eb; border-bottom: 1px solid #c8d8eb; }
+    .badge-up   { background: #eafaf1; color: var(--green); padding: 2px 8px; border-radius: 20px; font-size: .78rem; font-weight: 600; }
+    .badge-down { background: #fdf0ee; color: var(--red);   padding: 2px 8px; border-radius: 20px; font-size: .78rem; font-weight: 600; }
+
+    .cards-row { display: grid; gap: 14px; }
+    .cards-4   { grid-template-columns: repeat(4, 1fr); }
+    .card.purple { border-color: #7b5ea7; }
+    .card {
+      background: var(--card); border-radius: 12px; padding: 18px 20px;
+      box-shadow: 0 2px 8px rgba(0,0,0,.07);
+      border-left: 4px solid var(--primary);
+    }
+    .card.green  { border-color: var(--green); }
+    .card.orange { border-color: var(--accent); }
+    .card-label { font-size: .75rem; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+    .card-value { font-size: 1.8rem; font-weight: 700; color: var(--text); line-height: 1.2; margin-top: 4px; }
+    .card-sub   { font-size: .8rem; color: var(--muted); margin-top: 4px; }
+    .occ-bar-wrap { background: #e8f0f8; border-radius: 8px; height: 10px; margin-top: 10px; overflow: hidden; }
+    .occ-bar { height: 100%; border-radius: 8px; background: linear-gradient(90deg, var(--primary), #2c7abf); }
+
+    #error-msg {
+      display: none; background: #fdf0ee; border: 1px solid var(--red);
+      border-radius: 8px; padding: 14px 18px; color: var(--red);
+      margin-bottom: 16px; font-size: .9rem;
+    }
+
+    @media (max-width: 600px) {
+      header h1 { font-size: 1rem; }
+      table { font-size: .78rem; }
+      td, th { padding: 8px 10px; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>🏨 <span>Himalayan Suite</span> — Dashboard</h1>
+    <div id="date-label">Loading…</div>
+  </div>
+  <div class="header-controls">
+    <input type="date" id="date-picker" title="Select date"/>
+    <button id="go-btn" onclick="loadByDate()">📅 View</button>
+    <button id="today-btn" onclick="goToday()">Today</button>
+    <button id="refresh-btn" onclick="loadData()">⟳ Refresh</button>
+  </div>
+</header>
+
+<main>
+  <div id="error-msg"></div>
+  <div id="loading"><div class="spinner"></div><div>Fetching hotel data…</div></div>
+  <div id="content" style="display:none"></div>
+</main>
+
+<script>
+let currentDate = null;
+
+document.addEventListener('DOMContentLoaded', () => {
+  const today = new Date().toISOString().split('T')[0];
+  const picker = document.getElementById('date-picker');
+  picker.max = today;
+  picker.value = today;
+});
+
+function setAllBtnsDisabled(disabled) {
+  ['refresh-btn','go-btn','today-btn'].forEach(id => {
+    document.getElementById(id).disabled = disabled;
+  });
+}
+
+async function loadData(dateStr) {
+  setAllBtnsDisabled(true);
+  document.getElementById('refresh-btn').textContent = '⟳ Loading…';
+  document.getElementById('loading').style.display = 'flex';
+  document.getElementById('content').style.display = 'none';
+  document.getElementById('error-msg').style.display = 'none';
+
+  const url = dateStr ? `/api/dashboard?date=${dateStr}` : '/api/dashboard';
+
+  try {
+    const res  = await fetch(url);
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    renderDashboard(data);
+  } catch(e) {
+    document.getElementById('error-msg').style.display = 'block';
+    document.getElementById('error-msg').textContent = '⚠️ Error: ' + e.message;
+    document.getElementById('loading').style.display = 'none';
+  }
+
+  setAllBtnsDisabled(false);
+  document.getElementById('refresh-btn').textContent = '⟳ Refresh';
+}
+
+function loadByDate() {
+  const val = document.getElementById('date-picker').value;
+  if (!val) { loadData(); return; }
+  currentDate = val;
+  loadData(val);
+}
+
+function goToday() {
+  currentDate = null;
+  const today = new Date().toISOString().split('T')[0];
+  document.getElementById('date-picker').value = today;
+  loadData();
+}
+
+function fmt(n, decimals=0) {
+  if (!n && n !== 0) return '—';
+  return Number(n).toLocaleString('en-IN', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+}
+
+function changeBadge(val) {
+  if (val > 0)  return `<span class="badge-up">▲ ${fmt(val)}</span>`;
+  if (val < 0)  return `<span class="badge-down">▼ ${fmt(Math.abs(val))}</span>`;
+  return `<span style="color:#aaa">—</span>`;
+}
+
+function renderDashboard(d) {
+  const labelSel  = d.is_today ? 'Today'     : d.today_str;
+  const labelPrev = d.is_today ? 'Yesterday' : d.prev_str;
+  document.getElementById('date-label').textContent =
+    d.is_today ? `📅 ${d.date}` : `📅 Viewing: ${d.date}`;
+
+  const o = d.occupancy, r = d.rooms;
+  let html = '';
+
+  // ── Occupancy ─────────────────────────────────────────
+  html += `<div class="section-title">📊 Occupancy</div>
+  <div class="cards-row cards-4">
+    <div class="card green">
+      <div class="card-label">Occupancy — ${labelSel}</div>
+      <div class="card-value">${o.today_pct}%</div>
+      <div class="card-sub">${o.today} / ${r.total} rooms &nbsp;·&nbsp; ${fmt(o.today_pax)} pax</div>
+      <div class="occ-bar-wrap"><div class="occ-bar" style="width:${o.today_pct}%"></div></div>
+    </div>
+    <div class="card">
+      <div class="card-label">Occupancy — ${labelPrev}</div>
+      <div class="card-value">${o.yest_pct}%</div>
+      <div class="card-sub">${o.yesterday} / ${r.total} rooms &nbsp;·&nbsp; ${fmt(o.yest_pax)} pax</div>
+      <div class="occ-bar-wrap"><div class="occ-bar" style="width:${o.yest_pct}%"></div></div>
+    </div>
+    <div class="card orange">
+      <div class="card-label">This Month (MTD)</div>
+      <div class="card-value">${o.mtd_pct}%</div>
+      <div class="card-sub">${fmt(o.mtd_rooms)} / ${fmt(o.mtd_avail)} room-nights</div>
+      <div class="occ-bar-wrap"><div class="occ-bar" style="width:${o.mtd_pct}%"></div></div>
+    </div>
+    <div class="card purple">
+      <div class="card-label">Fiscal Year (Jul 17 '25)</div>
+      <div class="card-value">${o.fy_pct}%</div>
+      <div class="card-sub">${fmt(o.fy_rooms)} / ${fmt(o.fy_avail)} room-nights</div>
+      <div class="occ-bar-wrap"><div class="occ-bar" style="width:${o.fy_pct}%;background:linear-gradient(90deg,#7b5ea7,#a07cc5)"></div></div>
+    </div>
+  </div>`;
+
+  // ── Revenue ────────────────────────────────────────────
+  html += `<div class="section-title">💰 Revenue — ${labelSel} vs ${labelPrev}</div>
+  <div class="table-card">
+    <table>
+      <thead>
+        <tr>
+          <th>Category</th>
+          <th class="right">${labelSel}</th>
+          <th class="right">${labelPrev}</th>
+          <th class="right">Change</th>
+        </tr>
+      </thead>
+      <tbody>`;
+
+  for (const row of d.revenue) {
+    const cls = row.subtotal ? ' class="subtotal"' : '';
+    html += `<tr${cls}>
+      <td>${row.label}</td>
+      <td class="right">NPR ${fmt(row.today, 2)}</td>
+      <td class="right">NPR ${fmt(row.yesterday, 2)}</td>
+      <td class="right">${changeBadge(row.change)}</td>
+    </tr>`;
+  }
+
+  html += `</tbody></table></div>`;
+
+  html += `<div style="text-align:center;color:var(--muted);font-size:.78rem;margin:20px 0 8px">
+    Last updated: ${new Date().toLocaleTimeString()}${d.is_today ? ' — Auto-refreshes every 5 minutes' : ' — Historical view'}
+  </div>`;
+
+  document.getElementById('content').innerHTML = html;
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('content').style.display = 'block';
+}
+
+loadData();
+setInterval(() => { if (!currentDate) loadData(); }, 300000);
+</script>
+</body>
+</html>

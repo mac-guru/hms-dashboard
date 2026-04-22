@@ -1,0 +1,4 @@
+flask
+pymssql
+requests
+gunicorn
