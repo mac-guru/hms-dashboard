@@ -382,6 +382,26 @@ def api_dashboard():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/schema-debug")
+@login_required
+def api_schema_debug():
+    """Temporary: inspect FRSVDet and FRSVHDR column names."""
+    try:
+        conn = get_db()
+        cur  = conn.cursor(as_dict=True)
+        cur.execute("""
+            SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_NAME IN ('FRSVDet','FRSVHDR','Guests')
+            ORDER BY TABLE_NAME, ORDINAL_POSITION
+        """)
+        cols = cur.fetchall()
+        conn.close()
+        return jsonify(cols)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/activity")
 @login_required
 def api_activity():
