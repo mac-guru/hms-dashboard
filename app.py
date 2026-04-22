@@ -9,8 +9,8 @@ app.secret_key = os.environ.get('SECRET_KEY', 'hms-dashboard-key-2025')
 
 DASH_USER    = os.environ.get('DASH_USER',    'amrit')
 DASH_PASS    = os.environ.get('DASH_PASS',    'Nepal@213')
-DASH_HK_USER = os.environ.get('DASH_HK_USER', 'housekeeping')
-DASH_HK_PASS = os.environ.get('DASH_HK_PASS', 'HK@hms2025')
+DASH_HK_USER = os.environ.get('DASH_HK_USER', 'abhi')
+DASH_HK_PASS = os.environ.get('DASH_HK_PASS', 'abhii')
 
 def login_required(f):
     @wraps(f)
