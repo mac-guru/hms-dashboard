@@ -168,6 +168,52 @@
     /* ── Footer ── */
     .footer { text-align: center; color: var(--muted); font-size: .74rem; margin: 24px 0 12px; }
 
+    /* ── Date display (two-line) ── */
+    #date-display { text-align: center; min-width: 180px; }
+    #date-en { font-weight: 600; font-size: .9rem; color: var(--primary); }
+    #date-np { font-size: .75rem; color: var(--muted); margin-top: 2px; font-weight: 500; }
+
+    /* ── BS Date picker button ── */
+    .bs-picker-wrap { position: relative; }
+    .bs-btn {
+      background: var(--accent); color: white; border: none;
+      padding: 7px 14px; border-radius: 20px;
+      font-size: .82rem; font-weight: 600; cursor: pointer;
+      transition: background .2s; white-space: nowrap;
+    }
+    .bs-btn:hover { background: #d4921c; }
+
+    /* ── BS popup ── */
+    .bs-popup {
+      display: none; position: absolute;
+      top: calc(100% + 10px); left: 50%; transform: translateX(-50%);
+      background: white; border-radius: 14px;
+      box-shadow: 0 8px 32px rgba(0,0,0,.18);
+      border: 1px solid var(--border);
+      padding: 18px 16px; z-index: 999; min-width: 270px;
+    }
+    .bs-popup.open { display: block; }
+    .bs-popup-title {
+      font-weight: 700; font-size: .82rem; color: var(--primary);
+      text-transform: uppercase; letter-spacing: .5px;
+      margin-bottom: 12px;
+    }
+    .bs-popup-row { display: flex; gap: 8px; margin-bottom: 12px; }
+    .bs-select {
+      flex: 1; padding: 8px 6px; border-radius: 8px;
+      border: 1.5px solid var(--border); font-size: .82rem;
+      color: var(--text); outline: none; cursor: pointer;
+      background: #f8fafc;
+    }
+    .bs-select:focus { border-color: var(--primary); background: white; }
+    .bs-go-btn {
+      width: 100%; padding: 10px; background: var(--primary);
+      color: white; border: none; border-radius: 8px;
+      font-size: .9rem; font-weight: 600; cursor: pointer; transition: .2s;
+    }
+    .bs-go-btn:hover { background: #2c5f8a; }
+    .bs-error { color: var(--red); font-size: .78rem; margin-top: 8px; min-height: 16px; }
+
     /* ── Responsive ── */
     @media (max-width: 480px) {
       .header-left h1 { font-size: 1rem; }
@@ -175,7 +221,9 @@
       .stat-value { font-size: 1.6rem; }
       th, td { padding: 9px 10px; }
       table { font-size: .8rem; }
-      #date-display { min-width: 140px; font-size: .82rem; }
+      #date-display { min-width: 140px; }
+      #date-en { font-size: .82rem; }
+      .bs-popup { left: auto; right: 0; transform: none; }
     }
   </style>
 </head>
@@ -191,9 +239,28 @@
 
 <div class="date-bar">
   <button class="date-nav-btn" id="prev-btn" onclick="goDate(-1)" title="Previous day">&#8592;</button>
-  <div id="date-display">Loading…</div>
+  <div id="date-display">
+    <div id="date-en">Loading…</div>
+    <div id="date-np"></div>
+  </div>
   <button class="date-nav-btn" id="next-btn" onclick="goDate(1)" title="Next day">&#8594;</button>
   <input type="date" id="date-picker" onchange="loadByDate()"/>
+
+  <!-- Nepali BS date picker -->
+  <div class="bs-picker-wrap">
+    <button class="bs-btn" id="bs-picker-btn" onclick="toggleBsPicker(event)">🗓 BS</button>
+    <div class="bs-popup" id="bs-popup">
+      <div class="bs-popup-title">🗓 Nepali Date (BS)</div>
+      <div class="bs-popup-row">
+        <select id="bs-year" class="bs-select" title="Year"></select>
+        <select id="bs-month" class="bs-select" title="Month"></select>
+        <select id="bs-day" class="bs-select" title="Day"></select>
+      </div>
+      <button class="bs-go-btn" onclick="goBsDate()">Go →</button>
+      <div id="bs-error" class="bs-error"></div>
+    </div>
+  </div>
+
   <button class="today-btn" onclick="goToday()">Today</button>
 </div>
 
@@ -290,9 +357,84 @@ function addDays(dateStr, delta) {
   return `${y}-${m}-${day}`;
 }
 
+// ── BS Date Picker ─────────────────────────────────────
+const BS_MONTHS = [
+  'Baisakh','Jestha','Ashadh','Shrawan',
+  'Bhadra','Ashwin','Kartik','Mangsir',
+  'Poush','Magh','Falgun','Chaitra'
+];
+
+function initBsPicker() {
+  const ysel = document.getElementById('bs-year');
+  const msel = document.getElementById('bs-month');
+  const dsel = document.getElementById('bs-day');
+
+  // Years: 2070 → 2090
+  for (let y = 2090; y >= 2070; y--) {
+    const o = document.createElement('option');
+    o.value = y; o.textContent = y;
+    ysel.appendChild(o);
+  }
+  // Months
+  BS_MONTHS.forEach((name, i) => {
+    const o = document.createElement('option');
+    o.value = i + 1; o.textContent = `${i+1} – ${name}`;
+    msel.appendChild(o);
+  });
+  // Days 1–32
+  for (let day = 1; day <= 32; day++) {
+    const o = document.createElement('option');
+    o.value = day; o.textContent = day;
+    dsel.appendChild(o);
+  }
+}
+
+function syncBsPicker(bs) {
+  // Set picker dropdowns to match current viewed date
+  document.getElementById('bs-year').value  = bs.year;
+  document.getElementById('bs-month').value = bs.month;
+  document.getElementById('bs-day').value   = bs.day;
+}
+
+function toggleBsPicker(e) {
+  e.stopPropagation();
+  document.getElementById('bs-popup').classList.toggle('open');
+  document.getElementById('bs-error').textContent = '';
+}
+
+async function goBsDate() {
+  const y   = document.getElementById('bs-year').value;
+  const m   = document.getElementById('bs-month').value;
+  const day = document.getElementById('bs-day').value;
+  const errEl = document.getElementById('bs-error');
+  errEl.textContent = '';
+
+  try {
+    const res  = await fetch(`/api/bs-to-ad?y=${y}&m=${m}&d=${day}`);
+    const data = await res.json();
+    if (data.error) { errEl.textContent = '⚠ ' + data.error; return; }
+
+    document.getElementById('bs-popup').classList.remove('open');
+    const picker = document.getElementById('date-picker');
+    picker.value = data.ad;
+    currentDate  = data.ad === getToday() ? null : data.ad;
+    loadData(currentDate);
+  } catch(e) {
+    errEl.textContent = '⚠ ' + e.message;
+  }
+}
+
+// Close BS popup when clicking outside
+document.addEventListener('click', () => {
+  document.getElementById('bs-popup').classList.remove('open');
+});
+document.getElementById('bs-popup').addEventListener('click', e => e.stopPropagation());
+
+// ── Init on load ───────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
+  initBsPicker();
   const picker = document.getElementById('date-picker');
-  picker.max = getToday();
+  picker.max   = getToday();
   picker.value = getToday();
   loadData();
 });
@@ -356,8 +498,10 @@ function renderDashboard(d) {
   const labelPrv = isToday ? 'Yesterday' : d.prev_str;
   const o = d.occupancy, r = d.rooms;
 
-  // Date bar
-  document.getElementById('date-display').textContent = d.date;
+  // Date bar — English + Nepali date, sync BS picker
+  document.getElementById('date-en').textContent = d.date;
+  document.getElementById('date-np').textContent = d.nepali_date || '';
+  if (d.bs) syncBsPicker(d.bs);
   const picker = document.getElementById('date-picker');
   document.getElementById('next-btn').disabled = picker.value >= getToday();
 

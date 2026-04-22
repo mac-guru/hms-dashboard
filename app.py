@@ -316,10 +316,16 @@ def api_dashboard():
             })
 
         return jsonify({
-            "date":      selected.strftime("%A, %B %d, %Y"),
-            "today_str": selected.strftime("%m/%d/%Y"),
-            "prev_str":  previous.strftime("%m/%d/%Y"),
-            "is_today":  is_today,
+            "date":         selected.strftime("%A, %B %d, %Y"),
+            "today_str":    selected.strftime("%m/%d/%Y"),
+            "prev_str":     previous.strftime("%m/%d/%Y"),
+            "is_today":     is_today,
+            "nepali_date":  f"{selected_bs.day} {selected_bs.strftime('%B')} {selected_bs.year}",
+            "bs": {
+                "year":  selected_bs.year,
+                "month": selected_bs.month,
+                "day":   selected_bs.day,
+            },
             "frontdesk": {
                 "reservations": int(fv(rsv.get("arr"))),
                 "checkins":     int(fv(t.get("ArrRm_T"))),
@@ -395,6 +401,23 @@ def api_activity():
         return jsonify(all_items)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/bs-to-ad")
+@login_required
+def api_bs_to_ad():
+    """Convert a Bikram Sambat date to an AD date string (YYYY-MM-DD)."""
+    try:
+        y = int(request.args.get("y", 0))
+        m = int(request.args.get("m", 0))
+        d = int(request.args.get("d", 0))
+        bs_date = NepaliDate(y, m, d)
+        ad_date = bs_date.to_datetime_date()
+        if ad_date > datetime.now().date():
+            return jsonify({"error": "Future dates are not allowed"}), 400
+        return jsonify({"ad": ad_date.strftime("%Y-%m-%d")})
+    except Exception as e:
+        return jsonify({"error": f"Invalid date: {e}"}), 400
 
 
 @app.route("/")
