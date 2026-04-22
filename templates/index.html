@@ -91,7 +91,7 @@
     .tab-btn:hover:not(.active) { color: var(--text); }
 
     /* ── Main Content ── */
-    main { padding: 20px; max-width: 860px; margin: 0 auto; }
+    main { padding: 20px; max-width: 1100px; margin: 0 auto; }
     .tab-content { display: none; }
     .tab-content.active { display: block; }
 
@@ -257,13 +257,15 @@
       display: inline-block; padding: 2px 8px; border-radius: 8px;
       font-size: .72rem; font-weight: 700; background: #ede9fe; color: #5b21b6;
     }
-    /* Guest table scrolls horizontally so all columns always visible */
-    #tab-guests .table-card { overflow-x: auto; }
-    #tab-guests table { min-width: 780px; }
     #tab-guests th, #tab-guests td { padding: 10px 12px; white-space: nowrap; }
 
     /* ── Responsive ── */
     @media (max-width: 700px) { .hide-sm { display: none; } }
+    /* Guest table: horizontal scroll only on small screens */
+    @media (max-width: 900px) {
+      #tab-guests .table-card { overflow-x: auto; }
+      #tab-guests table { min-width: 780px; }
+    }
     @media (max-width: 480px) {
       .header-left h1 { font-size: 1rem; }
       .tab-btn { padding: 12px 16px; font-size: .82rem; }
