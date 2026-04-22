@@ -527,18 +527,12 @@ def api_rooms():
             SELECT
                 r.RmNo,
                 r.RmAvl,
-                (SELECT TOP 1 GName
-                 FROM Guests
-                 WHERE GRmNo = r.RmNo
-                   AND CAST(GDepDt AS DATE) >= CAST(GETDATE() AS DATE)
-                 ORDER BY GDepDt DESC) AS guest_name,
-                (SELECT MAX(CAST(BillRmDepDate AS DATE))
-                 FROM Bills
-                 WHERE BillRmNo = r.RmNo
-                   AND BillCode = 'RC'
-                   AND BillCleared = 0
-                   AND (BillVoid IS NULL OR BillVoid = 0)) AS checkout_date
+                g.GName      AS guest_name,
+                CAST(g.GDepDt AS DATE) AS checkout_date
             FROM Rooms r
+            LEFT JOIN Guests g
+                ON g.GRmNo = r.RmNo
+               AND CAST(g.GDepDt AS DATE) >= CAST(GETDATE() AS DATE)
             ORDER BY r.RmNo
         """)
         rooms = cur.fetchall()
