@@ -376,62 +376,50 @@ def api_activity():
 @app.route("/api/debug-cash")
 @login_required
 def api_debug_cash():
-    """Temporary: drill into PMT bills and PaidInPaidOut to find cash source."""
+    """Temporary: find every BillCode/description contributing to today's cash total."""
     try:
         conn = pymssql.connect(**DB)
         cur  = conn.cursor(as_dict=True)
 
-        # Sample recent PMT bill rows — find which column holds the amount
-        cur.execute("""
-            SELECT TOP 10 *
-            FROM Bills
-            WHERE BillCode = 'PMT'
-            ORDER BY BillDt DESC
-        """)
-        pmt_samples = cur.fetchall()
-
-        # PMT today total (try BillTot and BillRC)
+        # Every BillCode + description group for today — sorted by total descending
         cur.execute("""
             SELECT
-                SUM(ISNULL(BillTot,0)) AS tot_BillTot,
-                SUM(ISNULL(BillRC,0))  AS tot_BillRC
+                BillCode,
+                BillDes,
+                COUNT(*) AS cnt,
+                SUM(ISNULL(BillTot,0))   AS tot_BillTot,
+                SUM(ISNULL(BillCrAmt,0)) AS tot_BillCrAmt
             FROM Bills
-            WHERE BillCode = 'PMT'
-              AND CAST(BillDt AS DATE) = CAST(GETDATE() AS DATE)
+            WHERE CAST(BillDt AS DATE) = CAST(GETDATE() AS DATE)
               AND (BillVoid IS NULL OR BillVoid = 0)
+            GROUP BY BillCode, BillDes
+            ORDER BY tot_BillTot DESC
         """)
-        pmt_today = cur.fetchone()
+        today_breakdown = cur.fetchall()
 
-        # PaidInPaidOut — columns + sample rows
+        # ACR code samples — what is it?
         cur.execute("""
-            SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_NAME = 'PaidInPaidOut'
-            ORDER BY ORDINAL_POSITION
+            SELECT TOP 5 BillCode, BillDes, BillTot, BillCrAmt, BillPmode, BillDt, BillVoucherNo
+            FROM Bills
+            WHERE BillCode = 'ACR'
+            ORDER BY BillDt DESC
         """)
-        piopo_cols = [r['COLUMN_NAME'] for r in cur.fetchall()]
+        acr_samples = cur.fetchall()
 
-        cur.execute("SELECT TOP 10 * FROM PaidInPaidOut ORDER BY 1 DESC")
-        piopo_samples = cur.fetchall()
-
-        # AgentRcv — columns + sample rows
+        # CR code samples
         cur.execute("""
-            SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_NAME = 'AgentRcv'
-            ORDER BY ORDINAL_POSITION
+            SELECT TOP 5 BillCode, BillDes, BillTot, BillCrAmt, BillPmode, BillDt, BillVoucherNo
+            FROM Bills
+            WHERE BillCode = 'CR'
+            ORDER BY BillDt DESC
         """)
-        agentrcv_cols = [r['COLUMN_NAME'] for r in cur.fetchall()]
-
-        cur.execute("SELECT TOP 5 * FROM AgentRcv ORDER BY 1 DESC")
-        agentrcv_samples = cur.fetchall()
+        cr_samples = cur.fetchall()
 
         conn.close()
         return jsonify({
-            "pmt_samples":      pmt_samples,
-            "pmt_today":        pmt_today,
-            "piopo_cols":       piopo_cols,
-            "piopo_samples":    piopo_samples,
-            "agentrcv_cols":    agentrcv_cols,
-            "agentrcv_samples": agentrcv_samples,
+            "today_breakdown": today_breakdown,
+            "acr_samples":     acr_samples,
+            "cr_samples":      cr_samples,
         })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
