@@ -257,6 +257,10 @@
       display: inline-block; padding: 2px 8px; border-radius: 8px;
       font-size: .72rem; font-weight: 700; background: #ede9fe; color: #5b21b6;
     }
+    /* Guest table scrolls horizontally so all columns always visible */
+    #tab-guests .table-card { overflow-x: auto; }
+    #tab-guests table { min-width: 780px; }
+    #tab-guests th, #tab-guests td { padding: 10px 12px; white-space: nowrap; }
 
     /* ── Responsive ── */
     @media (max-width: 700px) { .hide-sm { display: none; } }

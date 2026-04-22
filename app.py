@@ -130,7 +130,15 @@ def api_dashboard():
                     ''
                 ))) AS meal_plan,
                 ISNULL(
-                    (SELECT TOP 1 RsvDetPax FROM FRSVDet
+                    (SELECT TOP 1
+                        CASE UPPER(LTRIM(RTRIM(RsvRmOcc)))
+                            WHEN 'SGL' THEN 1 WHEN 'SINGLE' THEN 1
+                            WHEN 'DBL' THEN 2 WHEN 'DOUBLE' THEN 2
+                            WHEN 'TWN' THEN 2 WHEN 'TWIN'   THEN 2
+                            WHEN 'TPL' THEN 3 WHEN 'TRIPLE' THEN 3
+                            ELSE ISNULL(RsvDetPax, 1)
+                        END
+                     FROM FRSVDet
                      WHERE RsvDetHdrId = g.GRsvHdrId AND RsvDetStat = 'open'),
                     1
                 ) AS pax,
@@ -148,15 +156,22 @@ def api_dashboard():
 
             SELECT
                 b.BillRmNo AS room,
-                MAX(LTRIM(RTRIM(ISNULL(b.BillGuestName, '')))) AS name,
-                NULL AS nat,
+                MAX(LTRIM(RTRIM(ISNULL(g2.GName, ISNULL(b.BillGuestName, ''))))) AS name,
+                MAX(LTRIM(RTRIM(ISNULL(g2.GNat, '')))) AS nat,
                 MAX(LTRIM(RTRIM(ISNULL(b.BillPlan, '')))) AS meal_plan,
-                NULL AS pax,
+                CASE UPPER(LTRIM(RTRIM(MAX(b.BillRmOcc))))
+                    WHEN 'SGL' THEN 1 WHEN 'SINGLE' THEN 1
+                    WHEN 'DBL' THEN 2 WHEN 'DOUBLE' THEN 2
+                    WHEN 'TWN' THEN 2 WHEN 'TWIN'   THEN 2
+                    WHEN 'TPL' THEN 3 WHEN 'TRIPLE' THEN 3
+                    ELSE 1
+                END AS pax,
                 CAST(MIN(b.BillRmArrDate) AS DATE) AS arrival,
                 CAST(MAX(b.BillRmDepDate) AS DATE) AS departure,
                 NULL AS checked_in_by,
                 NULL AS bill_to_full
             FROM Bills b
+            LEFT JOIN Guests g2 ON g2.GId = b.BillGId
             WHERE b.BillCleared = 0
               AND (b.BillVoid IS NULL OR b.BillVoid = 0)
               AND b.BillCode = 'RC'
