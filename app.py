@@ -396,18 +396,15 @@ def api_schema_debug():
                 g.GNat       AS nat,
                 g.GArrDt     AS arrival,
                 g.GDepDt     AS departure,
-                g.GPpNo      AS passport,
-                g.GIdentity  AS id_card,
-                g.GSeq       AS g_seq,
                 g.GGone      AS gone,
+                g.GSeq       AS g_seq,
                 h.RsvHdrRqBy AS checked_in_by,
-                h.RsvHdrAgt  AS bill_to_full,
-                h.RsvHdrName AS hdr_name
+                h.RsvHdrAgt  AS bill_to_full
             FROM Guests g
             LEFT JOIN FRSVHDR h ON h.RsvHdrId = g.GRsvHdrId
-            WHERE (g.GGone = 0 OR g.GGone IS NULL)
-              AND g.GRmNo IS NOT NULL
+            WHERE g.GRmNo IS NOT NULL
               AND g.GRmNo != ''
+              AND CAST(g.GDepDt AS DATE) >= CAST(GETDATE() AS DATE)
             ORDER BY g.GRmNo, g.GSeq
         """)
         rows = cur.fetchall()
