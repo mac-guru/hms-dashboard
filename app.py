@@ -674,9 +674,9 @@ def v2_rooms():
                 SELECT d.RsvDetRm, h.RsvHdrNm
                 FROM FRSVDET d
                 JOIN FRSVHDR h ON h.RsvHdrId = d.RsvDetHdrId
-                WHERE CAST(d.RsvDetDtIn AS DATE) <= CAST(GETDATE() AS DATE)
-                  AND CAST(d.RsvDetDtOut AS DATE) >= CAST(GETDATE() AS DATE)
-                  AND (d.RsvDetStatus IS NULL OR d.RsvDetStatus <> 'C')
+                WHERE CAST(d.RsvDetArrDt AS DATE) <= CAST(GETDATE() AS DATE)
+                  AND CAST(d.RsvDetDepDt AS DATE) >= CAST(GETDATE() AS DATE)
+                  AND d.RsvDetStat = 'open'
             ) rsv ON rsv.RsvDetRm = r.RmNo
             LEFT JOIN (
                 SELECT BillRmNo, MAX(BillGuestName) AS BillGuestName
