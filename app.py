@@ -804,6 +804,9 @@ def v2_reservations():
             where = "CAST(d.RsvDetArrDt AS DATE) = CAST(GETDATE() AS DATE)"
         elif status == 'upcoming':
             where = "CAST(d.RsvDetArrDt AS DATE) >= CAST(GETDATE() AS DATE)"
+        elif status == 'inhouse':
+            where = ("CAST(d.RsvDetArrDt AS DATE) <= CAST(GETDATE() AS DATE) "
+                     "AND CAST(d.RsvDetDepDt AS DATE) >= CAST(GETDATE() AS DATE)")
         else:
             where = f"CAST(d.RsvDetArrDt AS DATE) >= DATEADD(day, -{days}, CAST(GETDATE() AS DATE))"
 
