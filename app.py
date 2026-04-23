@@ -970,6 +970,74 @@ def v2_debug_columns():
         return add_cors(jsonify({'error': str(e)})), 500
 
 
+@app.route('/api/v2/spa/sales', methods=['GET','OPTIONS'])
+@api_key_required
+def v2_spa_sales():
+    """Spa sales history — date range, BillCode='SPA' only."""
+    if request.method == 'OPTIONS':
+        return add_cors(jsonify({}))
+    try:
+        date_from = request.args.get('date_from', datetime.now().strftime('%Y-%m-%d'))
+        date_to   = request.args.get('date_to',   datetime.now().strftime('%Y-%m-%d'))
+
+        conn = get_db()
+        cur  = conn.cursor(as_dict=True)
+        cur.execute("""
+            SELECT
+                BillDt            AS bill_date,
+                BillCode          AS bill_code,
+                BillRmNo          AS to_ref,
+                BillNo            AS bill_no,
+                ISNULL(BillTot,0) * ISNULL(BillFxRate,1) AS amount,
+                ISNULL(BillVat,0)      AS vat_amt,
+                ISNULL(BillDiscount,0) AS discount_amt,
+                ISNULL(BillComp,0)     AS compl_amt,
+                ISNULL(BillCashAmt,0)  AS cash_amt,
+                ISNULL(BillCrAmt,0)    AS credit_amt,
+                BillGuestName     AS customer,
+                BillCustomerName  AS customer_name,
+                BillPmode         AS payment_mode,
+                BillReceiptNo     AS cr_no
+            FROM Bills
+            WHERE CAST(BillDt AS DATE) >= %s
+              AND CAST(BillDt AS DATE) <= %s
+              AND BillCode = 'SPA'
+              AND (BillVoid IS NULL OR BillVoid = 0)
+            ORDER BY BillDt ASC, BillNo ASC
+        """, (date_from, date_to))
+        rows = cur.fetchall()
+        conn.close()
+
+        result = []
+        for row in rows:
+            pmode = str(row['payment_mode'] or 0)
+            pay_label = {
+                '0': 'Room/Charge', '1': 'Cash',
+                '2': 'Cash',        '3': 'Complimentary',
+            }.get(pmode, f'Mode{pmode}')
+
+            result.append({
+                'bill_date':    row['bill_date'].strftime('%Y-%m-%d') if row['bill_date'] else None,
+                'bill_time':    row['bill_date'].strftime('%H:%M')    if row['bill_date'] else None,
+                'outlet':       'Spa',
+                'to_ref':       (row['to_ref'] or '').strip(),
+                'bill_no':      (row['bill_no'] or '').strip() or None,
+                'amount':       round(float(row['amount']       or 0), 2),
+                'vat_amt':      round(float(row['vat_amt']      or 0), 2),
+                'discount_amt': round(float(row['discount_amt'] or 0), 2),
+                'compl_amt':    round(float(row['compl_amt']    or 0), 2),
+                'cash_amt':     round(float(row['cash_amt']     or 0), 2),
+                'credit_amt':   round(float(row['credit_amt']   or 0), 2),
+                'customer':     (row['customer_name'] or row['customer'] or '').strip(),
+                'payment_mode': pmode,
+                'pay_label':    pay_label,
+                'cr_no':        row['cr_no'],
+            })
+        return add_cors(jsonify(result))
+    except Exception as e:
+        return add_cors(jsonify({'error': str(e)})), 500
+
+
 @app.route('/api/v2/restaurant/sales', methods=['GET','OPTIONS'])
 @api_key_required
 def v2_restaurant_sales():
