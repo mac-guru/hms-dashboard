@@ -663,13 +663,21 @@ def v2_rooms():
                 r.RmFloor     AS floor,
                 rt.RmTyp      AS room_type,
                 rt.RmTypCode  AS room_type_code,
-                g.GName       AS guest_name,
+                COALESCE(g.GName, b.BillGuestName) AS guest_name,
                 g.GNat        AS nationality,
                 g.GId         AS guest_id
             FROM Rooms r
             LEFT JOIN RmAvl ra ON r.RmAvl = ra.RmAvl
-            LEFT JOIN RoomType rt ON r.RmType = rt.RmTypCode
+            LEFT JOIN RoomType rt ON TRY_CAST(r.RmType AS INT) = rt.RmTypSeq
             LEFT JOIN Guests g ON g.GRmNo = r.RmNo AND g.GGone = 0
+            LEFT JOIN (
+                SELECT BillRmNo, MAX(BillGuestName) AS BillGuestName
+                FROM Bills
+                WHERE CAST(BillDt AS DATE) = CAST(GETDATE() AS DATE)
+                  AND BillCode = 'RC'
+                  AND (BillVoid IS NULL OR BillVoid = 0)
+                GROUP BY BillRmNo
+            ) b ON b.BillRmNo = r.RmNo
             ORDER BY r.RmNo
         """)
         rows = cur.fetchall()
@@ -734,7 +742,7 @@ def v2_guests():
             FROM Guests g
             LEFT JOIN Rooms r  ON r.RmNo = g.GRmNo
             LEFT JOIN RmAvl ra ON r.RmAvl = ra.RmAvl
-            LEFT JOIN RoomType rt ON r.RmType = rt.RmTypCode
+            LEFT JOIN RoomType rt ON TRY_CAST(r.RmType AS INT) = rt.RmTypSeq
             LEFT JOIN FRSVHDR h ON h.RsvHdrId = g.GRsvHdrId
             WHERE g.GGone = 0
             ORDER BY g.GRmNo
