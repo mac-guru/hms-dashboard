@@ -974,14 +974,13 @@ def v2_restaurant_sales():
                 BillRmNo       AS to_ref,
                 BillNo         AS bill_no,
                 ISNULL(BillTot,0) * ISNULL(BillFxRate,1) AS amount,
-                ISNULL(BillFood,0)                        AS food_amt,
-                ISNULL(BillBev,0)                         AS bev_amt,
+                ISNULL(BillRC,0)                          AS food_amt,
+                ISNULL(BillPlanAmt,0)                     AS bev_amt,
                 ISNULL(BillVat,0)                         AS vat_amt,
-                ISNULL(BillDiscount,0)                    AS discount_amt,
+                ISNULL(BillTT,0)                          AS tax_amt,
                 BillGuestName  AS customer,
                 BillPmode      AS payment_mode,
-                BillReceiptNo  AS cr_no,
-                BillRmNo       AS room_ref
+                BillReceiptNo  AS cr_no
             FROM Bills
             WHERE CAST(BillDt AS DATE) >= %s
               AND CAST(BillDt AS DATE) <= %s
@@ -1013,7 +1012,7 @@ def v2_restaurant_sales():
                 'food_amt':     round(float(row['food_amt'] or 0), 2),
                 'bev_amt':      round(float(row['bev_amt'] or 0), 2),
                 'vat_amt':      round(float(row['vat_amt'] or 0), 2),
-                'discount_amt': round(float(row['discount_amt'] or 0), 2),
+                'tax_amt':      round(float(row['tax_amt'] or 0), 2),
                 'customer':     (row['customer'] or '').strip(),
                 'payment_mode': pmode,
                 'pay_label':    pay_label,
