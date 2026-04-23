@@ -947,6 +947,64 @@ def v2_bills():
         return add_cors(jsonify({'error': str(e)})), 500
 
 
+@app.route('/api/v2/restaurant/sales', methods=['GET','OPTIONS'])
+@api_key_required
+def v2_restaurant_sales():
+    """Restaurant sales history — date range, outlet filter."""
+    if request.method == 'OPTIONS':
+        return add_cors(jsonify({}))
+    try:
+        date_from = request.args.get('date_from', datetime.now().strftime('%Y-%m-%d'))
+        date_to   = request.args.get('date_to',   datetime.now().strftime('%Y-%m-%d'))
+        outlet    = request.args.get('outlet', '')   # RES | BAR | '' = all
+
+        if outlet == 'RES':
+            code_filter = "AND BillCode = 'RES'"
+        elif outlet == 'BAR':
+            code_filter = "AND BillCode = 'BAR'"
+        else:
+            code_filter = "AND BillCode IN ('RES','BAR')"
+
+        conn = get_db()
+        cur  = conn.cursor(as_dict=True)
+        cur.execute(f"""
+            SELECT
+                BillDt         AS bill_date,
+                BillCode       AS bill_code,
+                BillRmNo       AS to_ref,
+                BillNo         AS bill_no,
+                ISNULL(BillTot,0) * ISNULL(BillFxRate,1) AS amount,
+                BillGuestName  AS customer,
+                BillPmode      AS payment_mode,
+                BillReceiptNo  AS cr_no
+            FROM Bills
+            WHERE CAST(BillDt AS DATE) >= %s
+              AND CAST(BillDt AS DATE) <= %s
+              {code_filter}
+              AND (BillVoid IS NULL OR BillVoid = 0)
+            ORDER BY BillDt ASC, BillNo ASC
+        """, (date_from, date_to))
+        rows = cur.fetchall()
+        conn.close()
+
+        result = []
+        for row in rows:
+            result.append({
+                'bill_date':    row['bill_date'].strftime('%Y-%m-%d') if row['bill_date'] else None,
+                'bill_time':    row['bill_date'].strftime('%H:%M') if row['bill_date'] else None,
+                'outlet':       'Restaurant' if row['bill_code'] == 'RES' else 'Bar',
+                'to_ref':       (row['to_ref'] or '').strip(),
+                'bill_no':      row['bill_no'],
+                'amount':       round(float(row['amount'] or 0), 2),
+                'customer':     (row['customer'] or '').strip(),
+                'payment_mode': str(row['payment_mode'] or 0),
+                'cr_no':        row['cr_no'],
+            })
+        return add_cors(jsonify(result))
+    except Exception as e:
+        return add_cors(jsonify({'error': str(e)})), 500
+
+
 @app.route('/api/v2/stats', methods=['GET','OPTIONS'])
 @api_key_required
 def v2_stats():
