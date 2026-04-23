@@ -663,13 +663,21 @@ def v2_rooms():
                 r.RmFloor     AS floor,
                 rt.RmTyp      AS room_type,
                 rt.RmTypCode  AS room_type_code,
-                COALESCE(g.GName, b.BillGuestName) AS guest_name,
+                COALESCE(g.GName, rsv.RsvHdrNm, b.BillGuestName) AS guest_name,
                 g.GNat        AS nationality,
                 g.GId         AS guest_id
             FROM Rooms r
             LEFT JOIN RmAvl ra ON r.RmAvl = ra.RmAvl
             LEFT JOIN RoomType rt ON TRY_CAST(r.RmType AS INT) = rt.RmTypSeq
             LEFT JOIN Guests g ON g.GRmNo = r.RmNo AND g.GGone = 0
+            LEFT JOIN (
+                SELECT d.RsvDetRm, h.RsvHdrNm
+                FROM FRSVDET d
+                JOIN FRSVHDR h ON h.RsvHdrId = d.RsvDetHdrId
+                WHERE CAST(d.RsvDetDtIn AS DATE) <= CAST(GETDATE() AS DATE)
+                  AND CAST(d.RsvDetDtOut AS DATE) >= CAST(GETDATE() AS DATE)
+                  AND (d.RsvDetStatus IS NULL OR d.RsvDetStatus <> 'C')
+            ) rsv ON rsv.RsvDetRm = r.RmNo
             LEFT JOIN (
                 SELECT BillRmNo, MAX(BillGuestName) AS BillGuestName
                 FROM Bills
