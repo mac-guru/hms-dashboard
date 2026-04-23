@@ -947,6 +947,29 @@ def v2_bills():
         return add_cors(jsonify({'error': str(e)})), 500
 
 
+@app.route('/api/v2/debug/columns', methods=['GET','OPTIONS'])
+@api_key_required
+def v2_debug_columns():
+    """Return column names for a given table (debug use)."""
+    if request.method == 'OPTIONS':
+        return add_cors(jsonify({}))
+    try:
+        table = request.args.get('table', 'Bills')
+        conn = get_db()
+        cur  = conn.cursor(as_dict=True)
+        cur.execute("""
+            SELECT COLUMN_NAME, DATA_TYPE
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_NAME = %s
+            ORDER BY ORDINAL_POSITION
+        """, (table,))
+        cols = [{'name': r['COLUMN_NAME'], 'type': r['DATA_TYPE']} for r in cur.fetchall()]
+        conn.close()
+        return add_cors(jsonify(cols))
+    except Exception as e:
+        return add_cors(jsonify({'error': str(e)})), 500
+
+
 @app.route('/api/v2/restaurant/sales', methods=['GET','OPTIONS'])
 @api_key_required
 def v2_restaurant_sales():
