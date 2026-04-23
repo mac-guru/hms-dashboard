@@ -599,6 +599,13 @@ def api_bs_to_ad():
         return jsonify({"error": f"Invalid date: {e}"}), 400
 
 
+@app.route("/analysis")
+@login_required
+def analysis():
+    if session.get('role') == 'housekeeping':
+        return redirect(url_for('index'))
+    return render_template("hsh_analysis.html")
+
 @app.route("/")
 @login_required
 def index():
