@@ -604,7 +604,10 @@ def api_bs_to_ad():
 def analysis():
     if session.get('role') == 'housekeeping':
         return redirect(url_for('index'))
-    return render_template("hsh_analysis.html")
+    path = os.path.join(app.root_path, 'templates', 'hsh_analysis.html')
+    with open(path, 'rb') as f:
+        content = f.read()
+    return Response(content, content_type='text/html')
 
 @app.route("/")
 @login_required
