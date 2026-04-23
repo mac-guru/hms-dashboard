@@ -671,14 +671,15 @@ def v2_rooms():
             LEFT JOIN RoomType rt ON TRY_CAST(r.RmType AS INT) = rt.RmTypSeq
             LEFT JOIN Guests g ON g.GRmNo = r.RmNo AND g.GGone = 0
             LEFT JOIN (
-                SELECT r2.RmNo, h.RsvHdrName
+                SELECT r2.RmNo, h.RsvHdrName,
+                       ROW_NUMBER() OVER (PARTITION BY r2.RmNo ORDER BY d.RsvDetArrDt DESC) AS rn
                 FROM FRSVDet d
                 JOIN FRSVHDR h  ON h.RsvHdrId = d.RsvDetHdrId
                 JOIN Rooms r2   ON r2.RmId = d.RsvRmId
                 WHERE CAST(d.RsvDetArrDt AS DATE) <= CAST(GETDATE() AS DATE)
                   AND CAST(d.RsvDetDepDt AS DATE) >= CAST(GETDATE() AS DATE)
                   AND d.RsvDetStat != 'X'
-            ) rsv ON rsv.RmNo = r.RmNo
+            ) rsv ON rsv.RmNo = r.RmNo AND rsv.rn = 1
             LEFT JOIN (
                 SELECT BillRmNo, MAX(BillGuestName) AS BillGuestName
                 FROM Bills
