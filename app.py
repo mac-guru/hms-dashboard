@@ -4,6 +4,13 @@ import pymssql, requests, re, json, os
 from datetime import datetime, timedelta
 from nepali_datetime import date as NepaliDate
 
+# ── CORS helper ───────────────────────────────────────────
+def add_cors(response):
+    response.headers['Access-Control-Allow-Origin']  = '*'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, X-API-Key'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+    return response
+
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'hms-dashboard-key-2025')
 
@@ -154,6 +161,18 @@ DB = {
     'timeout':  10,
 }
 TOTAL_ROOMS = 27   # confirmed from Audit.TRmH_T
+
+# ── API Key auth (for AMRIT HMS+ → Flask) ────────────────
+API_KEY = os.environ.get('HMS_API_KEY', 'hms-amrit-2026')
+
+def api_key_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        key = request.headers.get('X-API-Key') or request.args.get('key')
+        if key != API_KEY:
+            return add_cors(jsonify({'error': 'Unauthorized'})), 401
+        return f(*args, **kwargs)
+    return decorated
 
 # ── HMS Web (only for activity feed) ─────────────────────
 HMS_URL  = os.environ.get('HMS_URL', 'http://172.16.10.10:8982/himalayansuite')
@@ -615,6 +634,514 @@ def index():
     if session.get('role') == 'housekeeping':
         return Response(HOUSEKEEPING_PAGE, content_type='text/html')
     return render_template("index.html", role='admin')
+
+
+# ═══════════════════════════════════════════════════════════
+#  AMRIT HMS+ API  (v2 — API key auth, CORS enabled)
+# ═══════════════════════════════════════════════════════════
+
+@app.route('/api/v2/rooms', methods=['GET','OPTIONS'])
+@api_key_required
+def v2_rooms():
+    """Full room rack — status, guest, type, dates."""
+    if request.method == 'OPTIONS':
+        return add_cors(jsonify({}))
+    try:
+        conn = get_db()
+        cur  = conn.cursor(as_dict=True)
+        cur.execute("""
+            SELECT
+                r.RmNo        AS room_no,
+                r.RmAvl       AS status_code,
+                ra.RmAvlDesc  AS status_label,
+                ra.RmAvlColor AS status_color,
+                r.RmOcc       AS occupancy_type,
+                r.RmArrDt     AS arr_date,
+                r.RmDepDt     AS dep_date,
+                r.RmPax       AS pax,
+                r.RmRate      AS rate,
+                r.RmFloor     AS floor,
+                rt.RmTyp      AS room_type,
+                rt.RmTypCode  AS room_type_code,
+                g.GName       AS guest_name,
+                g.GNat        AS nationality,
+                g.GId         AS guest_id
+            FROM Rooms r
+            LEFT JOIN RmAvl ra ON r.RmAvl = ra.RmAvl
+            LEFT JOIN RoomType rt ON r.RmType = rt.RmTypCode
+            LEFT JOIN Guests g ON g.GRmNo = r.RmNo AND g.GGone = 0
+            ORDER BY r.RmNo
+        """)
+        rows = cur.fetchall()
+        conn.close()
+        result = []
+        for row in rows:
+            result.append({
+                'room_no':       str(row['room_no'] or '').strip(),
+                'status_code':   row['status_code'],
+                'status_label':  row['status_label'] or 'Vacant',
+                'status_color':  row['status_color'] or '#8deb85',
+                'occupancy_type':row['occupancy_type'] or '',
+                'arr_date':      row['arr_date'].strftime('%Y-%m-%d') if row['arr_date'] else None,
+                'dep_date':      row['dep_date'].strftime('%Y-%m-%d') if row['dep_date'] else None,
+                'pax':           row['pax'] or 0,
+                'rate':          float(row['rate'] or 0),
+                'floor':         row['floor'],
+                'room_type':     row['room_type'] or '',
+                'room_type_code':row['room_type_code'] or '',
+                'guest_name':    (row['guest_name'] or '').strip(),
+                'nationality':   row['nationality'] or '',
+                'guest_id':      row['guest_id'],
+            })
+        return add_cors(jsonify(result))
+    except Exception as e:
+        return add_cors(jsonify({'error': str(e)})), 500
+
+
+@app.route('/api/v2/guests', methods=['GET','OPTIONS'])
+@api_key_required
+def v2_guests():
+    """In-house guests (GGone=0) + expected arrivals."""
+    if request.method == 'OPTIONS':
+        return add_cors(jsonify({}))
+    try:
+        conn = get_db()
+        cur  = conn.cursor(as_dict=True)
+        cur.execute("""
+            SELECT
+                g.GId         AS guest_id,
+                g.GRmNo       AS room_no,
+                g.GName       AS guest_name,
+                g.GFName      AS first_name,
+                g.GSName      AS last_name,
+                g.GNat        AS nationality,
+                g.GArrDt      AS arr_date,
+                g.GDepDt      AS dep_date,
+                g.GNo         AS pax,
+                g.GPpNo       AS passport_no,
+                g.GIdentity   AS id_type,
+                g.GGone       AS gone,
+                g.GBalance    AS balance,
+                g.GRem        AS remarks,
+                g.GRsvHdrId   AS rsv_hdr_id,
+                g.GMbId       AS mb_id,
+                r.RmAvl       AS room_status_code,
+                ra.RmAvlDesc  AS room_status,
+                rt.RmTyp      AS room_type,
+                h.RsvHdrSrc   AS source,
+                h.RsvHdrPlan  AS meal_plan,
+                h.RsvHdrAgt   AS agent
+            FROM Guests g
+            LEFT JOIN Rooms r  ON r.RmNo = g.GRmNo
+            LEFT JOIN RmAvl ra ON r.RmAvl = ra.RmAvl
+            LEFT JOIN RoomType rt ON r.RmType = rt.RmTypCode
+            LEFT JOIN FRSVHDR h ON h.RsvHdrId = g.GRsvHdrId
+            WHERE g.GGone = 0
+            ORDER BY g.GRmNo
+        """)
+        rows = cur.fetchall()
+        conn.close()
+        result = []
+        for row in rows:
+            result.append({
+                'guest_id':    row['guest_id'],
+                'room_no':     (row['room_no'] or '').strip(),
+                'guest_name':  (row['guest_name'] or '').strip(),
+                'nationality': row['nationality'] or '',
+                'arr_date':    row['arr_date'].strftime('%Y-%m-%d') if row['arr_date'] else None,
+                'dep_date':    row['dep_date'].strftime('%Y-%m-%d') if row['dep_date'] else None,
+                'pax':         row['pax'] or 1,
+                'passport_no': row['passport_no'] or '',
+                'id_type':     row['id_type'] or '',
+                'balance':     float(row['balance'] or 0),
+                'room_status': row['room_status'] or '',
+                'room_type':   row['room_type'] or '',
+                'source':      row['source'] or '',
+                'meal_plan':   row['meal_plan'] or '',
+                'agent':       row['agent'] or '',
+                'remarks':     row['remarks'] or '',
+                'mb_id':       row['mb_id'],
+                'rsv_hdr_id':  row['rsv_hdr_id'],
+                'status':      'In-House',
+            })
+        return add_cors(jsonify(result))
+    except Exception as e:
+        return add_cors(jsonify({'error': str(e)})), 500
+
+
+@app.route('/api/v2/reservations', methods=['GET','OPTIONS'])
+@api_key_required
+def v2_reservations():
+    """Reservations — upcoming, today, or all open."""
+    if request.method == 'OPTIONS':
+        return add_cors(jsonify({}))
+    try:
+        status = request.args.get('status', '')  # today | upcoming | all
+        days   = int(request.args.get('days', 30))
+        conn   = get_db()
+        cur    = conn.cursor(as_dict=True)
+
+        where = "(BillVoid IS NULL OR BillVoid = 0)"
+        if status == 'today':
+            where = "CAST(d.RsvDetArrDt AS DATE) = CAST(GETDATE() AS DATE)"
+        elif status == 'upcoming':
+            where = "CAST(d.RsvDetArrDt AS DATE) >= CAST(GETDATE() AS DATE)"
+        else:
+            where = f"CAST(d.RsvDetArrDt AS DATE) >= DATEADD(day, -{days}, CAST(GETDATE() AS DATE))"
+
+        cur.execute(f"""
+            SELECT
+                h.RsvHdrId        AS rsv_id,
+                d.RsvDetId        AS det_id,
+                h.RsvHdrName      AS guest_name,
+                d.RsvRmType       AS room_type,
+                d.RsvDetArrDt     AS arr_date,
+                d.RsvDetDepDt     AS dep_date,
+                d.RsvDetPax       AS pax,
+                d.RsvDetPlan      AS meal_plan,
+                d.RsvRmRate       AS rate,
+                d.RsvDetStat      AS status,
+                d.RsvDetCheckIn   AS checked_in,
+                h.RsvHdrSrc       AS source,
+                h.RsvHdrAgt       AS agent,
+                h.RsvHdrMarket    AS market,
+                h.RsvHdrEmail     AS email,
+                h.RsvHdrRem       AS remarks,
+                h.RsvHdrCountry   AS country,
+                d.RsvRmId         AS room_id,
+                r.RmNo            AS room_no
+            FROM FRSVDet d
+            JOIN FRSVHDR h ON h.RsvHdrId = d.RsvDetHdrId
+            LEFT JOIN Rooms r ON r.RmId = d.RsvRmId
+            WHERE {where}
+              AND d.RsvDetStat != 'X'
+            ORDER BY d.RsvDetArrDt
+        """)
+        rows = cur.fetchall()
+        conn.close()
+
+        def nights(arr, dep):
+            try: return (dep - arr).days
+            except: return 0
+
+        result = []
+        for row in rows:
+            arr = row['arr_date'].date() if hasattr(row['arr_date'], 'date') else row['arr_date']
+            dep = row['dep_date'].date() if hasattr(row['dep_date'], 'date') else row['dep_date']
+            result.append({
+                'rsv_id':     row['rsv_id'],
+                'det_id':     row['det_id'],
+                'guest_name': (row['guest_name'] or '').strip(),
+                'room_no':    (row['room_no'] or '').strip(),
+                'room_type':  row['room_type'] or '',
+                'arr_date':   arr.strftime('%Y-%m-%d') if arr else None,
+                'dep_date':   dep.strftime('%Y-%m-%d') if dep else None,
+                'nights':     nights(arr, dep),
+                'pax':        row['pax'] or 1,
+                'meal_plan':  row['meal_plan'] or '',
+                'rate':       float(row['rate'] or 0),
+                'status':     'Expected' if not row['checked_in'] else 'In-House',
+                'source':     row['source'] or '',
+                'agent':      row['agent'] or '',
+                'market':     row['market'] or '',
+                'email':      row['email'] or '',
+                'remarks':    row['remarks'] or '',
+                'country':    row['country'] or '',
+            })
+        return add_cors(jsonify(result))
+    except Exception as e:
+        return add_cors(jsonify({'error': str(e)})), 500
+
+
+@app.route('/api/v2/bills', methods=['GET','OPTIONS'])
+@api_key_required
+def v2_bills():
+    """Bills / folio for a room or date range."""
+    if request.method == 'OPTIONS':
+        return add_cors(jsonify({}))
+    try:
+        room = request.args.get('room', '')
+        days = int(request.args.get('days', 90))
+        conn = get_db()
+        cur  = conn.cursor(as_dict=True)
+
+        where = f"CAST(BillDt AS DATE) >= DATEADD(day, -{days}, CAST(GETDATE() AS DATE))"
+        if room:
+            where += f" AND BillRmNo = '{room}'"
+
+        cur.execute(f"""
+            SELECT
+                BillRmNo       AS room_no,
+                BillDt         AS bill_date,
+                BillCode       AS bill_code,
+                bd.BD_DES      AS bill_desc,
+                BillTot        AS bill_total,
+                BillFxRate     AS fx_rate,
+                BillCurr       AS currency,
+                ISNULL(BillTot,0) * ISNULL(BillFxRate,1) AS bill_total_npr,
+                BillRC         AS room_charge,
+                BillPlanAmt    AS plan_amt,
+                BillVat        AS vat_amt,
+                BillTT         AS tax_amt,
+                BillPmode      AS payment_mode,
+                BillReceiptNo  AS receipt_no,
+                BillGuestName  AS guest_name,
+                BillVoid       AS is_void,
+                BillNts        AS nights,
+                BillRmArrDate  AS arr_date,
+                BillRmDepDate  AS dep_date
+            FROM Bills b
+            LEFT JOIN BillDesc bd ON bd.BD_CODE = b.BillCode
+            WHERE {where}
+              AND (BillVoid IS NULL OR BillVoid = 0)
+            ORDER BY BillDt DESC
+        """)
+        rows = cur.fetchall()
+        conn.close()
+
+        result = []
+        for row in rows:
+            result.append({
+                'room_no':       (row['room_no'] or '').strip(),
+                'bill_date':     row['bill_date'].strftime('%Y-%m-%d') if row['bill_date'] else None,
+                'bill_time':     row['bill_date'].strftime('%H:%M') if row['bill_date'] else None,
+                'bill_code':     row['bill_code'] or '',
+                'bill_desc':     row['bill_desc'] or row['bill_code'] or '',
+                'bill_total':    float(row['bill_total'] or 0),
+                'fx_rate':       float(row['fx_rate'] or 1),
+                'currency':      row['currency'] or 'NRS',
+                'bill_total_npr':round(float(row['bill_total'] or 0) * float(row['fx_rate'] or 1), 2),
+                'plan_amt':      float(row['plan_amt'] or 0),
+                'vat_amt':       float(row['vat_amt'] or 0),
+                'tax_amt':       float(row['tax_amt'] or 0),
+                'payment_mode':  str(row['payment_mode'] or 0),
+                'receipt_no':    row['receipt_no'],
+                'guest_name':    (row['guest_name'] or '').strip(),
+                'nights':        row['nights'] or 0,
+                'arr_date':      row['arr_date'].strftime('%Y-%m-%d') if row['arr_date'] else None,
+                'dep_date':      row['dep_date'].strftime('%Y-%m-%d') if row['dep_date'] else None,
+            })
+        return add_cors(jsonify(result))
+    except Exception as e:
+        return add_cors(jsonify({'error': str(e)})), 500
+
+
+@app.route('/api/v2/stats', methods=['GET','OPTIONS'])
+@api_key_required
+def v2_stats():
+    """Dashboard stats — occupancy, revenue, arrivals for a given date."""
+    if request.method == 'OPTIONS':
+        return add_cors(jsonify({}))
+    try:
+        date_param = request.args.get('date')
+        selected   = datetime.strptime(date_param, '%Y-%m-%d') if date_param else datetime.now()
+
+        conn = get_db()
+        cur  = conn.cursor(as_dict=True)
+
+        # Live room rack counts
+        cur.execute("SELECT RmAvl, COUNT(*) as cnt FROM Rooms GROUP BY RmAvl")
+        rack = {r['RmAvl']: r['cnt'] for r in cur.fetchall()}
+
+        # Today arrivals from reservations
+        cur.execute("""
+            SELECT COUNT(*) as arr FROM FRSVDet
+            WHERE CAST(RsvDetArrDt AS DATE) = %s AND RsvDetCheckIn = 0 AND RsvDetStat != 'X'
+        """, (selected.date(),))
+        arrivals = (cur.fetchone() or {}).get('arr', 0)
+
+        # Today departures
+        cur.execute("""
+            SELECT COUNT(*) as dep FROM FRSVDet
+            WHERE CAST(RsvDetDepDt AS DATE) = %s AND RsvDetStat != 'X'
+        """, (selected.date(),))
+        departures = (cur.fetchone() or {}).get('dep', 0)
+
+        # Revenue from Bills
+        cur.execute("""
+            SELECT
+              SUM(CASE WHEN BillCode='RC' THEN ISNULL(BillRC,0)*ISNULL(BillFxRate,1) ELSE 0 END) as room_rev,
+              SUM(CASE WHEN BillCode='RC' THEN ISNULL(BillPlanAmt,0)*ISNULL(BillFxRate,1) ELSE 0 END) as plan_rev,
+              SUM(CASE WHEN BillCode='RES' THEN ISNULL(BillTot,0) ELSE 0 END) as food_rev,
+              SUM(CASE WHEN BillCode='BAR' THEN ISNULL(BillTot,0) ELSE 0 END) as bev_rev,
+              SUM(CASE WHEN BillCode='SPA' THEN ISNULL(BillTot,0) ELSE 0 END) as spa_rev,
+              SUM(CASE WHEN BillCode='LAU' THEN ISNULL(BillTot,0) ELSE 0 END) as lau_rev,
+              SUM(CASE WHEN BillCode='MBAR' THEN ISNULL(BillTot,0) ELSE 0 END) as mbar_rev,
+              SUM(CASE WHEN BillPmode=1 THEN ISNULL(BillTot,0) ELSE 0 END) as cash_received
+            FROM Bills
+            WHERE CAST(BillDt AS DATE) = %s
+              AND (BillVoid IS NULL OR BillVoid = 0)
+        """, (selected.date(),))
+        rev = cur.fetchone() or {}
+
+        # In-house count
+        cur.execute("SELECT COUNT(*) as cnt FROM Guests WHERE GGone = 0")
+        in_house = (cur.fetchone() or {}).get('cnt', 0)
+
+        conn.close()
+
+        room_rev  = fv(rev.get('room_rev'))
+        plan_rev  = fv(rev.get('plan_rev'))
+        food_rev  = fv(rev.get('food_rev'))
+        bev_rev   = fv(rev.get('bev_rev'))
+        spa_rev   = fv(rev.get('spa_rev'))
+        lau_rev   = fv(rev.get('lau_rev'))
+        mbar_rev  = fv(rev.get('mbar_rev'))
+        total_rev = room_rev + plan_rev + food_rev + bev_rev + spa_rev + lau_rev + mbar_rev
+
+        occupied  = rack.get(0, 0)
+        occ_pct   = round(occupied / TOTAL_ROOMS * 100, 1) if TOTAL_ROOMS else 0
+
+        return add_cors(jsonify({
+            'date':        selected.strftime('%Y-%m-%d'),
+            'total_rooms': TOTAL_ROOMS,
+            'rack': {
+                'occupied':      occupied,
+                'vacant':        rack.get(1, 0),
+                'dirty':         rack.get(2, 0),
+                'out_of_order':  rack.get(3, 0) + rack.get(6, 0),
+                'inspect':       rack.get(4, 0),
+                'departure':     rack.get(5, 0),
+                'house_use':     rack.get(7, 0),
+            },
+            'occupancy_pct': occ_pct,
+            'in_house':      int(in_house),
+            'arrivals':      int(arrivals),
+            'departures':    int(departures),
+            'revenue': {
+                'room':          round(room_rev),
+                'meal_plan':     round(plan_rev),
+                'food':          round(food_rev),
+                'beverage':      round(bev_rev),
+                'spa_transport': round(spa_rev),
+                'laundry':       round(lau_rev),
+                'mini_bar':      round(mbar_rev),
+                'total':         round(total_rev),
+                'cash_received': round(fv(rev.get('cash_received'))),
+            },
+        }))
+    except Exception as e:
+        return add_cors(jsonify({'error': str(e)})), 500
+
+
+@app.route('/api/v2/agents', methods=['GET','OPTIONS'])
+@api_key_required
+def v2_agents():
+    """Agent / sundry debtor list with outstanding balances."""
+    if request.method == 'OPTIONS':
+        return add_cors(jsonify({}))
+    try:
+        conn = get_db()
+        cur  = conn.cursor(as_dict=True)
+        cur.execute("""
+            SELECT
+                a.AgtId          AS agent_id,
+                a.AgtComp        AS company,
+                a.AgtName        AS contact_name,
+                a.AgtCode        AS code,
+                a.AgtEmail       AS email,
+                a.AgtTel1        AS phone,
+                a.AgtMobile      AS mobile,
+                a.AgtCreditLimit AS credit_limit,
+                a.AgtCom         AS commission_pct,
+                a.AgtFDBal       AS fd_balance,
+                a.AgtFBBal       AS fb_balance,
+                a.AgtInactive    AS inactive
+            FROM Agents a
+            WHERE ISNULL(a.AgtInactive, 0) = 0
+            ORDER BY a.AgtComp
+        """)
+        rows = cur.fetchall()
+        conn.close()
+        result = []
+        for row in rows:
+            result.append({
+                'agent_id':       row['agent_id'],
+                'company':        (row['company'] or '').strip(),
+                'contact_name':   (row['contact_name'] or '').strip(),
+                'code':           row['code'] or '',
+                'email':          row['email'] or '',
+                'phone':          row['phone'] or '',
+                'mobile':         row['mobile'] or '',
+                'credit_limit':   float(row['credit_limit'] or 0),
+                'commission_pct': float(row['commission_pct'] or 0),
+                'fd_balance':     float(row['fd_balance'] or 0),
+                'fb_balance':     float(row['fb_balance'] or 0),
+            })
+        return add_cors(jsonify(result))
+    except Exception as e:
+        return add_cors(jsonify({'error': str(e)})), 500
+
+
+@app.route('/api/v2/lost-found', methods=['GET','OPTIONS'])
+@api_key_required
+def v2_lost_found():
+    """Lost and found items."""
+    if request.method == 'OPTIONS':
+        return add_cors(jsonify({}))
+    try:
+        conn = get_db()
+        cur  = conn.cursor(as_dict=True)
+        cur.execute("""
+            SELECT
+                lf.LFId            AS id,
+                lf.LFLoc           AS location,
+                lf.LFDate          AS date_found,
+                lf.LFComment       AS description,
+                lf.LFStatus        AS status,
+                lf.LFHandOverDept  AS dept_id,
+                u1.UserName        AS found_by,
+                u2.UserName        AS handed_to
+            FROM LostFound lf
+            LEFT JOIN USERS u1 ON u1.UserId = lf.LFBy
+            LEFT JOIN USERS u2 ON u2.UserId = lf.LFHandOverTo
+            ORDER BY lf.LFDate DESC
+        """)
+        rows = cur.fetchall()
+        conn.close()
+        result = []
+        for row in rows:
+            status_map = {0: 'Found', 1: 'Handed Over', 2: 'Claimed', 3: 'Disposed'}
+            result.append({
+                'id':          row['id'],
+                'location':    row['location'] or '',
+                'date_found':  row['date_found'].strftime('%Y-%m-%d %H:%M') if row['date_found'] else None,
+                'description': row['description'] or '',
+                'status':      status_map.get(row['status'], 'Unknown'),
+                'found_by':    row['found_by'] or '',
+                'handed_to':   row['handed_to'] or '',
+            })
+        return add_cors(jsonify(result))
+    except Exception as e:
+        return add_cors(jsonify({'error': str(e)})), 500
+
+
+@app.route('/api/v2/room-types', methods=['GET','OPTIONS'])
+@api_key_required
+def v2_room_types():
+    """Room types with rates."""
+    if request.method == 'OPTIONS':
+        return add_cors(jsonify({}))
+    try:
+        conn = get_db()
+        cur  = conn.cursor(as_dict=True)
+        cur.execute("""
+            SELECT RmTypId, RmTyp, RmTypCode, RmTypSGL, RmTypDBL, RmTypTPL, RmCurrency
+            FROM RoomType ORDER BY RmTypSeq
+        """)
+        rows = cur.fetchall()
+        conn.close()
+        return add_cors(jsonify([{
+            'id':       r['RmTypId'],
+            'name':     r['RmTyp'] or '',
+            'code':     r['RmTypCode'] or '',
+            'rate_sgl': float(r['RmTypSGL'] or 0),
+            'rate_dbl': float(r['RmTypDBL'] or 0),
+            'rate_tpl': float(r['RmTypTPL'] or 0),
+            'currency': r['RmCurrency'] or 'NRS',
+        } for r in rows]))
+    except Exception as e:
+        return add_cors(jsonify({'error': str(e)})), 500
 
 
 if __name__ == "__main__":
