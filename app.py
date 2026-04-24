@@ -1134,13 +1134,20 @@ def v2_overview_revenue():
         conn = get_db()
         cur  = conn.cursor(as_dict=True)
 
-        # Room revenue from BillsNights (include complimentary — matches WebHMS total)
+        # Room revenue from Bills (BillCode='RC') — matches WebHMS night audit report.
+        # NRS rooms: BillRC + BillPlanAmt  |  Foreign: (BillRC + BillPlanAmt) * BillFxRate
         cur.execute("""
             SELECT
-                ISNULL(SUM(ISNULL(BillTot,0) * ISNULL(BillFxRate,1)), 0) AS room_revenue,
+                ISNULL(SUM(
+                    CASE WHEN BillCurr = 'NRS' OR BillCurr IS NULL
+                         THEN ISNULL(BillRC,0) + ISNULL(BillPlanAmt,0)
+                         ELSE (ISNULL(BillRC,0) + ISNULL(BillPlanAmt,0)) * ISNULL(BillFxRate,1)
+                    END
+                ), 0) AS room_revenue,
                 COUNT(*) AS room_count
-            FROM BillsNights
-            WHERE CAST(BillDt AS DATE) >= %s
+            FROM Bills
+            WHERE BillCode = 'RC'
+              AND CAST(BillDt AS DATE) >= %s
               AND CAST(BillDt AS DATE) <= %s
               AND (BillVoid IS NULL OR BillVoid = 0)
         """, (date_from, date_to))
@@ -1193,7 +1200,7 @@ def v2_overview_revenue():
 @app.route('/api/v2/rooms/revenue', methods=['GET','OPTIONS'])
 @api_key_required
 def v2_rooms_revenue():
-    """Room revenue detail from BillsNights — per-room per-day rows."""
+    """Room revenue detail from Bills (BillCode='RC') — per-room per-day rows."""
     if request.method == 'OPTIONS':
         return add_cors(jsonify({}))
     try:
@@ -1203,24 +1210,26 @@ def v2_rooms_revenue():
         cur  = conn.cursor(as_dict=True)
         cur.execute("""
             SELECT
-                CAST(bn.BillDt AS DATE)                       AS bill_date,
-                bn.BillRmNo                                   AS room_no,
-                bn.BillRmType                                 AS room_type,
-                bn.BillPlan                                   AS plan,
-                ISNULL(bn.BillRC,0)                           AS room_charge,
-                ISNULL(bn.BillPlanAmt,0)                      AS plan_amt,
-                ISNULL(bn.BillVat,0)                          AS vat_amt,
-                ISNULL(bn.BillTT,0)                           AS tt_amt,
-                ISNULL(bn.BillTot,0) * ISNULL(bn.BillFxRate,1) AS total_amt,
-                ISNULL(bn.BillIsComp,0)                       AS is_comp,
-                COALESCE(g.GName, h.RsvHdrName, bn.BillRmNo) AS guest_name
-            FROM BillsNights bn
-            LEFT JOIN Guests g   ON g.GId = bn.BillGId
-            LEFT JOIN FRSVHDR h  ON h.RsvHdrId = bn.BillMbId
-            WHERE CAST(bn.BillDt AS DATE) >= %s
-              AND CAST(bn.BillDt AS DATE) <= %s
-              AND (bn.BillVoid IS NULL OR bn.BillVoid = 0)
-            ORDER BY bn.BillDt ASC, bn.BillRmNo ASC
+                CAST(b.BillDt AS DATE)                           AS bill_date,
+                b.BillRmNo                                       AS room_no,
+                ISNULL(b.BillRC,  0)                             AS room_charge,
+                ISNULL(b.BillPlanAmt, 0)                         AS plan_amt,
+                ISNULL(b.BillVat, 0)                             AS vat_amt,
+                ISNULL(b.BillTT,  0)                             AS tt_amt,
+                CASE WHEN b.BillCurr = 'NRS' OR b.BillCurr IS NULL
+                     THEN ISNULL(b.BillRC,0) + ISNULL(b.BillPlanAmt,0)
+                     ELSE (ISNULL(b.BillRC,0) + ISNULL(b.BillPlanAmt,0)) * ISNULL(b.BillFxRate,1)
+                END                                              AS total_amt,
+                b.BillCurr                                       AS currency,
+                ISNULL(b.BillFxRate, 1)                          AS fx_rate,
+                CASE WHEN b.BillPmode = 3 THEN 1 ELSE 0 END     AS is_comp,
+                ISNULL(b.BillGuestName, b.BillRmNo)              AS guest_name
+            FROM Bills b
+            WHERE b.BillCode = 'RC'
+              AND CAST(b.BillDt AS DATE) >= %s
+              AND CAST(b.BillDt AS DATE) <= %s
+              AND (b.BillVoid IS NULL OR b.BillVoid = 0)
+            ORDER BY b.BillDt ASC, b.BillRmNo ASC
         """, (date_from, date_to))
         rows = cur.fetchall()
         conn.close()
@@ -1229,14 +1238,16 @@ def v2_rooms_revenue():
         for row in rows:
             result.append({
                 'bill_date':   str(row['bill_date']),
-                'room_no':     (row['room_no'] or '').strip(),
-                'room_type':   (row['room_type'] or '').strip(),
-                'plan':        (row['plan'] or '').strip(),
+                'room_no':     (row['room_no']    or '').strip(),
+                'room_type':   '',
+                'plan':        '',
                 'room_charge': round(float(row['room_charge'] or 0), 2),
                 'plan_amt':    round(float(row['plan_amt']    or 0), 2),
                 'vat_amt':     round(float(row['vat_amt']     or 0), 2),
                 'tt_amt':      round(float(row['tt_amt']      or 0), 2),
                 'total_amt':   round(float(row['total_amt']   or 0), 2),
+                'currency':    (row['currency']   or 'NRS').strip(),
+                'fx_rate':     round(float(row['fx_rate']     or 1),  4),
                 'is_comp':     bool(row['is_comp']),
                 'guest_name':  (row['guest_name'] or '').strip(),
             })
