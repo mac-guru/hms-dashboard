@@ -1429,8 +1429,6 @@ def v2_accounts_pl():
             payroll_total = 0.0
             payroll_rows  = []
 
-        conn.close()
-
         # GL_TYPE='I' entries: revenue recognized in accounting books (most accurate for P&L)
         # GL_TYPE='E' entries: expenses
         income_gl  = [e for e in gl_entries if e['gl_type'] == 'I']
@@ -1450,6 +1448,7 @@ def v2_accounts_pl():
         # WebHMS P&L labels: 300015 subtree = "Direct Expenses", 300016 subtree = "Indirect Expenses"
         cur.execute("SELECT GL_CODE, ISNULL(MAST_GL_CODE,'') AS MAST_GL_CODE FROM AC_CHART WHERE GL_TYPE='E'")
         parent_map = {r['GL_CODE'].strip(): r['MAST_GL_CODE'].strip() for r in cur.fetchall()}
+        conn.close()
 
         def get_expense_category(gl_code):
             code = gl_code.strip()
