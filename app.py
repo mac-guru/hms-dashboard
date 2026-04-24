@@ -950,13 +950,23 @@ def v2_bills():
 @app.route('/api/v2/debug/columns', methods=['GET','OPTIONS'])
 @api_key_required
 def v2_debug_columns():
-    """Return column names for a given table (debug use)."""
+    """Return column names for a given table, or list all tables if table=* (debug use)."""
     if request.method == 'OPTIONS':
         return add_cors(jsonify({}))
     try:
         table = request.args.get('table', 'Bills')
         conn = get_db()
         cur  = conn.cursor(as_dict=True)
+        if table == '*':
+            cur.execute("""
+                SELECT TABLE_NAME
+                FROM INFORMATION_SCHEMA.TABLES
+                WHERE TABLE_TYPE = 'BASE TABLE'
+                ORDER BY TABLE_NAME
+            """)
+            tables = [r['TABLE_NAME'] for r in cur.fetchall()]
+            conn.close()
+            return add_cors(jsonify(tables))
         cur.execute("""
             SELECT COLUMN_NAME, DATA_TYPE
             FROM INFORMATION_SCHEMA.COLUMNS
