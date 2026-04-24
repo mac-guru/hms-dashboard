@@ -1273,7 +1273,10 @@ def v2_accounts_pl():
         cur  = conn.cursor(as_dict=True)
         fv   = lambda v: round(float(v or 0), 2)
 
-        # ── 1. Revenue from Bills (all BillCodes) ─────────────────
+        # ── 1. Revenue from Bills (operational codes only) ──────────
+        # Excluded accounting/payment codes:
+        #   ACR=Agent Credit Receipt, PMT=Payment, RCT=Receipt,
+        #   MB=Master Bill transfer, CR=Credit Note, ADV=Advance, CADV=Cash Advance
         cur.execute("""
             SELECT
                 BillCode,
@@ -1298,6 +1301,9 @@ def v2_accounts_pl():
             WHERE CAST(BillDt AS DATE) >= %s
               AND CAST(BillDt AS DATE) <= %s
               AND (BillVoid IS NULL OR BillVoid = 0)
+              AND (BillCode IS NULL OR BillCode NOT IN (
+                      'ACR','PMT','RCT','MB','CR','ADV','CADV'
+                  ))
             GROUP BY BillCode
             ORDER BY BillCode
         """, (date_from, date_to))
@@ -1305,7 +1311,7 @@ def v2_accounts_pl():
 
         revenue_by_code = {}
         for row in bill_rows:
-            code = (row['BillCode'] or '').strip().upper()
+            code = (row['BillCode'] or 'MIS').strip().upper()
             revenue_by_code[code] = {
                 'total':   fv(row['total_revenue']),
                 'tariff':  fv(row['tariff']),
@@ -1324,8 +1330,10 @@ def v2_accounts_pl():
         lau_total    = rev('LAU')
         bak_total    = rev('BAK')
         cof_total    = rev('COF')
+        # Other operational codes (MIS, SHP, TPL, etc.) — accounting codes already excluded above
+        known_codes  = {'RC','RES','BAR','MBAR','SPA','FLT','LAU','BAK','COF'}
         mis_total    = sum(v['total'] for k, v in revenue_by_code.items()
-                           if k not in ('RC','RES','BAR','MBAR','SPA','FLT','LAU','BAK','COF'))
+                           if k not in known_codes)
 
         total_revenue = room_total + food_total + bev_total + spa_total + \
                         lau_total + bak_total + cof_total + mis_total
@@ -1343,66 +1351,79 @@ def v2_accounts_pl():
             'by_code':      {k: v['total'] for k, v in revenue_by_code.items()},
         }
 
-        # ── 2. Expenses from GL ledger ────────────────────────────
+        # ── 2. Expenses from GL ledger (via Transactions for dates) ──
+        # GLTRAN_MAST only has CON.../CN... vouchers and does NOT link to
+        # GLTRAN_DETL (which has Pur.../JV.../SV... vouchers).
+        # Use Transactions.T_DES = GLTRAN_DETL.VCH_NO as the date bridge.
         cur.execute("""
             SELECT
                 ac.GL_CODE,
                 ac.GL_NAME,
-                ac.MAST_GL_CODE,
+                ISNULL(ac.MAST_GL_CODE,'') AS MAST_GL_CODE,
                 ac.GL_TYPE,
-                ac.GL_GROUP_LEVEL,
-                ISNULL(sgm.GROUP_CODE, '') AS group_code,
-                ISNULL(sgm.GROUP_NAME, '') AS group_name,
-                ISNULL(sgm.GL_TYPE,  '')   AS stmt_gl_type,
-                ISNULL(sgm.ORD_LEVEL, 999) AS group_order,
+                ISNULL(ac.GL_GROUP_LEVEL, 0) AS GL_GROUP_LEVEL,
                 SUM(CASE WHEN gtd.GL_DR_CR='D' THEN ISNULL(gtd.GL_LC_AMT,0) ELSE 0 END) AS dr_amt,
                 SUM(CASE WHEN gtd.GL_DR_CR='C' THEN ISNULL(gtd.GL_LC_AMT,0) ELSE 0 END) AS cr_amt
             FROM GLTRAN_DETL gtd
-            JOIN GLTRAN_MAST gtm ON gtm.VCH_NO = gtd.VCH_NO
-            JOIN AC_CHART    ac  ON ac.GL_CODE  = gtd.GL_CODE
-            LEFT JOIN STATEMENT_GROUP_DETL sgd
-                   ON sgd.GL_CODE        = gtd.GL_CODE
-                  AND sgd.STATEMENT_TYPE = 'PL'
-            LEFT JOIN STATEMENT_GROUP_MAST sgm
-                   ON sgm.GROUP_CODE     = sgd.GROUP_CODE
-                  AND sgm.STATEMENT_TYPE = 'PL'
-            WHERE CAST(gtm.VCH_EDATE AS DATE) >= %s
-              AND CAST(gtm.VCH_EDATE AS DATE) <= %s
-            GROUP BY
-                ac.GL_CODE, ac.GL_NAME, ac.MAST_GL_CODE, ac.GL_TYPE, ac.GL_GROUP_LEVEL,
-                sgm.GROUP_CODE, sgm.GROUP_NAME, sgm.GL_TYPE, sgm.ORD_LEVEL
-            ORDER BY ISNULL(sgm.ORD_LEVEL,999), ac.GL_CODE
+            JOIN AC_CHART ac ON ac.GL_CODE = gtd.GL_CODE
+            WHERE ac.GL_TYPE IN ('E','I')
+              AND EXISTS (
+                  SELECT 1 FROM Transactions t
+                  WHERE t.T_DES = gtd.VCH_NO
+                    AND CAST(t.T_DT AS DATE) >= %s
+                    AND CAST(t.T_DT AS DATE) <= %s
+              )
+            GROUP BY ac.GL_CODE, ac.GL_NAME, ac.MAST_GL_CODE, ac.GL_TYPE, ac.GL_GROUP_LEVEL
+            ORDER BY ac.GL_CODE
         """, (date_from, date_to))
         gl_rows = cur.fetchall()
-        conn.close()
 
         gl_entries = []
         for row in gl_rows:
             dr  = fv(row['dr_amt'])
             cr  = fv(row['cr_amt'])
-            typ = (row['GL_TYPE'] or row['stmt_gl_type'] or '').upper()
+            typ = (row['GL_TYPE'] or '').strip().upper()
             # Income: net = CR - DR  |  Expense: net = DR - CR
-            net = (cr - dr) if typ in ('I', 'INCOME', 'INC') else (dr - cr)
+            net = (cr - dr) if typ == 'I' else (dr - cr)
             gl_entries.append({
-                'gl_code':     (row['GL_CODE']     or '').strip(),
-                'gl_name':     (row['GL_NAME']     or '').strip(),
+                'gl_code':     (row['GL_CODE']      or '').strip(),
+                'gl_name':     (row['GL_NAME']      or '').strip(),
                 'parent_code': (row['MAST_GL_CODE'] or '').strip(),
                 'gl_type':     typ,
                 'gl_level':    int(row['GL_GROUP_LEVEL'] or 0),
-                'group_code':  (row['group_code']   or '').strip(),
-                'group_name':  (row['group_name']   or '').strip(),
-                'group_order': int(row['group_order'] or 999),
                 'dr_amt':      dr,
                 'cr_amt':      cr,
                 'net_amount':  round(net, 2),
             })
 
-        # Separate by statement type using group_code prefix or GL_TYPE
-        income_gl  = [e for e in gl_entries if e['gl_type'] in ('I','INCOME','INC')]
-        expense_gl = [e for e in gl_entries if e['gl_type'] not in ('I','INCOME','INC') and e['net_amount'] != 0]
+        # ── 3. Payroll (salary / indirect labour expenses) ───────────
+        payroll_total = 0.0
+        payroll_rows  = []
+        try:
+            cur.execute("""
+                SELECT
+                    ISNULL(PRL_DEPT,'Unknown') AS dept,
+                    SUM(ISNULL(PRL_AMT, 0)) AS total_amt
+                FROM Payroll
+                WHERE CAST(PRL_DT AS DATE) >= %s
+                  AND CAST(PRL_DT AS DATE) <= %s
+                GROUP BY PRL_DEPT
+                ORDER BY PRL_DEPT
+            """, (date_from, date_to))
+            payroll_rows  = cur.fetchall()
+            payroll_total = sum(fv(r['total_amt']) for r in payroll_rows)
+        except Exception:
+            payroll_total = 0.0
+            payroll_rows  = []
 
-        total_expenses = sum(e['net_amount'] for e in expense_gl)
-        gross_profit   = round(total_revenue - total_expenses, 2)
+        conn.close()
+
+        income_gl  = [e for e in gl_entries if e['gl_type'] == 'I']
+        expense_gl = [e for e in gl_entries if e['gl_type'] == 'E' and e['net_amount'] != 0]
+
+        total_gl_expenses = sum(e['net_amount'] for e in expense_gl)
+        total_expenses    = round(total_gl_expenses + payroll_total, 2)
+        net_profit        = round(total_revenue - total_expenses, 2)
 
         return add_cors(jsonify({
             'date_from':      date_from,
@@ -1411,10 +1432,11 @@ def v2_accounts_pl():
             'gl_entries':     gl_entries,
             'income_gl':      income_gl,
             'expense_gl':     expense_gl,
+            'payroll_total':  round(payroll_total, 2),
+            'payroll_rows':   [{'dept': r['dept'], 'amount': fv(r['total_amt'])} for r in payroll_rows],
             'total_revenue':  round(total_revenue, 2),
-            'total_expenses': round(total_expenses, 2),
-            'gross_profit':   gross_profit,
-            'net_profit':     gross_profit,   # same until we have tax/below-line items
+            'total_expenses': total_expenses,
+            'net_profit':     net_profit,
         }))
     except Exception as e:
         return add_cors(jsonify({'error': str(e)})), 500
