@@ -1256,6 +1256,170 @@ def v2_rooms_revenue():
         return add_cors(jsonify({'error': str(e)})), 500
 
 
+@app.route('/api/v2/accounts/pl', methods=['GET','OPTIONS'])
+@api_key_required
+def v2_accounts_pl():
+    """Profit & Loss report: revenue from Bills + expenses from GL ledger."""
+    if request.method == 'OPTIONS':
+        return add_cors(jsonify({}))
+    try:
+        # Default: current Nepal fiscal year (mid-July to today)
+        today      = datetime.now()
+        fy_start   = datetime(today.year if today.month >= 7 else today.year - 1, 7, 17)
+        date_from  = request.args.get('date_from', fy_start.strftime('%Y-%m-%d'))
+        date_to    = request.args.get('date_to',   today.strftime('%Y-%m-%d'))
+
+        conn = get_db()
+        cur  = conn.cursor(as_dict=True)
+        fv   = lambda v: round(float(v or 0), 2)
+
+        # ── 1. Revenue from Bills (all BillCodes) ─────────────────
+        cur.execute("""
+            SELECT
+                BillCode,
+                SUM(CASE
+                    WHEN BillCode = 'RC' AND (BillCurr = 'NRS' OR BillCurr IS NULL)
+                        THEN ISNULL(BillRC,0) + ISNULL(BillPlanAmt,0)
+                    WHEN BillCode = 'RC' AND BillCurr NOT IN ('NRS') AND BillCurr IS NOT NULL
+                        THEN (ISNULL(BillRC,0) + ISNULL(BillPlanAmt,0)) * ISNULL(BillFxRate,1)
+                    ELSE ISNULL(BillTot,0)
+                END) AS total_revenue,
+                SUM(CASE WHEN BillCode='RC'
+                    THEN CASE WHEN BillCurr='NRS' OR BillCurr IS NULL
+                              THEN ISNULL(BillRC,0)
+                              ELSE ISNULL(BillRC,0)*ISNULL(BillFxRate,1) END
+                    ELSE 0 END) AS tariff,
+                SUM(CASE WHEN BillCode='RC'
+                    THEN CASE WHEN BillCurr='NRS' OR BillCurr IS NULL
+                              THEN ISNULL(BillPlanAmt,0)
+                              ELSE ISNULL(BillPlanAmt,0)*ISNULL(BillFxRate,1) END
+                    ELSE 0 END) AS plan_amt
+            FROM Bills
+            WHERE CAST(BillDt AS DATE) >= %s
+              AND CAST(BillDt AS DATE) <= %s
+              AND (BillVoid IS NULL OR BillVoid = 0)
+            GROUP BY BillCode
+            ORDER BY BillCode
+        """, (date_from, date_to))
+        bill_rows = cur.fetchall()
+
+        revenue_by_code = {}
+        for row in bill_rows:
+            code = (row['BillCode'] or '').strip().upper()
+            revenue_by_code[code] = {
+                'total':   fv(row['total_revenue']),
+                'tariff':  fv(row['tariff']),
+                'plan':    fv(row['plan_amt']),
+            }
+
+        def rev(code):
+            return revenue_by_code.get(code, {}).get('total', 0.0)
+
+        room_tariff  = revenue_by_code.get('RC', {}).get('tariff', 0.0)
+        room_plan    = revenue_by_code.get('RC', {}).get('plan',   0.0)
+        room_total   = rev('RC')
+        food_total   = rev('RES')
+        bev_total    = rev('BAR') + rev('MBAR')
+        spa_total    = rev('SPA') + rev('FLT')
+        lau_total    = rev('LAU')
+        bak_total    = rev('BAK')
+        cof_total    = rev('COF')
+        mis_total    = sum(v['total'] for k, v in revenue_by_code.items()
+                           if k not in ('RC','RES','BAR','MBAR','SPA','FLT','LAU','BAK','COF'))
+
+        total_revenue = room_total + food_total + bev_total + spa_total + \
+                        lau_total + bak_total + cof_total + mis_total
+
+        revenue = {
+            'room':         {'tariff': room_tariff, 'plan': room_plan, 'total': room_total},
+            'food':         food_total,
+            'beverage':     bev_total,
+            'spa':          spa_total,
+            'laundry':      lau_total,
+            'bakery':       bak_total,
+            'coffee':       cof_total,
+            'other':        mis_total,
+            'total':        round(total_revenue, 2),
+            'by_code':      {k: v['total'] for k, v in revenue_by_code.items()},
+        }
+
+        # ── 2. Expenses from GL ledger ────────────────────────────
+        cur.execute("""
+            SELECT
+                ac.GL_CODE,
+                ac.GL_NAME,
+                ac.MAST_GL_CODE,
+                ac.GL_TYPE,
+                ac.GL_GROUP_LEVEL,
+                ISNULL(sgm.GROUP_CODE, '') AS group_code,
+                ISNULL(sgm.GROUP_NAME, '') AS group_name,
+                ISNULL(sgm.GL_TYPE,  '')   AS stmt_gl_type,
+                ISNULL(sgm.ORD_LEVEL, 999) AS group_order,
+                SUM(CASE WHEN gtd.GL_DR_CR='D' THEN ISNULL(gtd.GL_LC_AMT,0) ELSE 0 END) AS dr_amt,
+                SUM(CASE WHEN gtd.GL_DR_CR='C' THEN ISNULL(gtd.GL_LC_AMT,0) ELSE 0 END) AS cr_amt
+            FROM GLTRAN_DETL gtd
+            JOIN GLTRAN_MAST gtm ON gtm.VCH_NO = gtd.VCH_NO
+            JOIN AC_CHART    ac  ON ac.GL_CODE  = gtd.GL_CODE
+            LEFT JOIN STATEMENT_GROUP_DETL sgd
+                   ON sgd.GL_CODE        = gtd.GL_CODE
+                  AND sgd.STATEMENT_TYPE = 'PL'
+            LEFT JOIN STATEMENT_GROUP_MAST sgm
+                   ON sgm.GROUP_CODE     = sgd.GROUP_CODE
+                  AND sgm.STATEMENT_TYPE = 'PL'
+            WHERE CAST(gtm.VCH_EDATE AS DATE) >= %s
+              AND CAST(gtm.VCH_EDATE AS DATE) <= %s
+            GROUP BY
+                ac.GL_CODE, ac.GL_NAME, ac.MAST_GL_CODE, ac.GL_TYPE, ac.GL_GROUP_LEVEL,
+                sgm.GROUP_CODE, sgm.GROUP_NAME, sgm.GL_TYPE, sgm.ORD_LEVEL
+            ORDER BY ISNULL(sgm.ORD_LEVEL,999), ac.GL_CODE
+        """, (date_from, date_to))
+        gl_rows = cur.fetchall()
+        conn.close()
+
+        gl_entries = []
+        for row in gl_rows:
+            dr  = fv(row['dr_amt'])
+            cr  = fv(row['cr_amt'])
+            typ = (row['GL_TYPE'] or row['stmt_gl_type'] or '').upper()
+            # Income: net = CR - DR  |  Expense: net = DR - CR
+            net = (cr - dr) if typ in ('I', 'INCOME', 'INC') else (dr - cr)
+            gl_entries.append({
+                'gl_code':     (row['GL_CODE']     or '').strip(),
+                'gl_name':     (row['GL_NAME']     or '').strip(),
+                'parent_code': (row['MAST_GL_CODE'] or '').strip(),
+                'gl_type':     typ,
+                'gl_level':    int(row['GL_GROUP_LEVEL'] or 0),
+                'group_code':  (row['group_code']   or '').strip(),
+                'group_name':  (row['group_name']   or '').strip(),
+                'group_order': int(row['group_order'] or 999),
+                'dr_amt':      dr,
+                'cr_amt':      cr,
+                'net_amount':  round(net, 2),
+            })
+
+        # Separate by statement type using group_code prefix or GL_TYPE
+        income_gl  = [e for e in gl_entries if e['gl_type'] in ('I','INCOME','INC')]
+        expense_gl = [e for e in gl_entries if e['gl_type'] not in ('I','INCOME','INC') and e['net_amount'] != 0]
+
+        total_expenses = sum(e['net_amount'] for e in expense_gl)
+        gross_profit   = round(total_revenue - total_expenses, 2)
+
+        return add_cors(jsonify({
+            'date_from':      date_from,
+            'date_to':        date_to,
+            'revenue':        revenue,
+            'gl_entries':     gl_entries,
+            'income_gl':      income_gl,
+            'expense_gl':     expense_gl,
+            'total_revenue':  round(total_revenue, 2),
+            'total_expenses': round(total_expenses, 2),
+            'gross_profit':   gross_profit,
+            'net_profit':     gross_profit,   # same until we have tax/below-line items
+        }))
+    except Exception as e:
+        return add_cors(jsonify({'error': str(e)})), 500
+
+
 @app.route('/api/v2/debug/columns', methods=['GET','OPTIONS'])
 @api_key_required
 def v2_debug_columns():
