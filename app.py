@@ -947,6 +947,130 @@ def v2_bills():
         return add_cors(jsonify({'error': str(e)})), 500
 
 
+@app.route('/api/v2/overview/revenue', methods=['GET','OPTIONS'])
+@api_key_required
+def v2_overview_revenue():
+    """Combined revenue summary: Room + Spa + Restaurant for a date range."""
+    if request.method == 'OPTIONS':
+        return add_cors(jsonify({}))
+    try:
+        date_from = request.args.get('date_from', datetime.now().strftime('%Y-%m-%d'))
+        date_to   = request.args.get('date_to',   datetime.now().strftime('%Y-%m-%d'))
+        conn = get_db()
+        cur  = conn.cursor(as_dict=True)
+
+        # Room revenue from BillsNights
+        cur.execute("""
+            SELECT
+                ISNULL(SUM(ISNULL(BillTot,0) * ISNULL(BillFxRate,1)), 0) AS room_revenue,
+                COUNT(*) AS room_count
+            FROM BillsNights
+            WHERE CAST(BillDt AS DATE) >= %s
+              AND CAST(BillDt AS DATE) <= %s
+              AND (BillVoid IS NULL OR BillVoid = 0)
+              AND (BillIsComp IS NULL OR BillIsComp = 0)
+        """, (date_from, date_to))
+        room = cur.fetchone()
+
+        # Spa revenue from Bills
+        cur.execute("""
+            SELECT
+                ISNULL(SUM(ISNULL(BillTot,0) * ISNULL(BillFxRate,1)), 0) AS spa_revenue,
+                COUNT(*) AS spa_count
+            FROM Bills
+            WHERE CAST(BillDt AS DATE) >= %s
+              AND CAST(BillDt AS DATE) <= %s
+              AND BillCode = 'SPA'
+              AND (BillVoid IS NULL OR BillVoid = 0)
+        """, (date_from, date_to))
+        spa = cur.fetchone()
+
+        # Restaurant revenue from Bills
+        cur.execute("""
+            SELECT
+                ISNULL(SUM(ISNULL(BillTot,0) * ISNULL(BillFxRate,1)), 0) AS restaurant_revenue,
+                COUNT(*) AS restaurant_count
+            FROM Bills
+            WHERE CAST(BillDt AS DATE) >= %s
+              AND CAST(BillDt AS DATE) <= %s
+              AND BillCode IN ('RES','BAR')
+              AND (BillVoid IS NULL OR BillVoid = 0)
+        """, (date_from, date_to))
+        res = cur.fetchone()
+        conn.close()
+
+        room_rev = round(float(room['room_revenue'] or 0), 2)
+        spa_rev  = round(float(spa['spa_revenue']   or 0), 2)
+        res_rev  = round(float(res['restaurant_revenue'] or 0), 2)
+
+        return add_cors(jsonify({
+            'room_revenue':       room_rev,
+            'spa_revenue':        spa_rev,
+            'restaurant_revenue': res_rev,
+            'total_revenue':      round(room_rev + spa_rev + res_rev, 2),
+            'room_count':         room['room_count'],
+            'spa_count':          spa['spa_count'],
+            'restaurant_count':   res['restaurant_count'],
+        }))
+    except Exception as e:
+        return add_cors(jsonify({'error': str(e)})), 500
+
+
+@app.route('/api/v2/rooms/revenue', methods=['GET','OPTIONS'])
+@api_key_required
+def v2_rooms_revenue():
+    """Room revenue detail from BillsNights — per-room per-day rows."""
+    if request.method == 'OPTIONS':
+        return add_cors(jsonify({}))
+    try:
+        date_from = request.args.get('date_from', datetime.now().strftime('%Y-%m-%d'))
+        date_to   = request.args.get('date_to',   datetime.now().strftime('%Y-%m-%d'))
+        conn = get_db()
+        cur  = conn.cursor(as_dict=True)
+        cur.execute("""
+            SELECT
+                CAST(bn.BillDt AS DATE)                       AS bill_date,
+                bn.BillRmNo                                   AS room_no,
+                bn.BillRmType                                 AS room_type,
+                bn.BillPlan                                   AS plan,
+                ISNULL(bn.BillRC,0)                           AS room_charge,
+                ISNULL(bn.BillPlanAmt,0)                      AS plan_amt,
+                ISNULL(bn.BillVat,0)                          AS vat_amt,
+                ISNULL(bn.BillTT,0)                           AS tt_amt,
+                ISNULL(bn.BillTot,0) * ISNULL(bn.BillFxRate,1) AS total_amt,
+                ISNULL(bn.BillIsComp,0)                       AS is_comp,
+                COALESCE(g.GName, h.RsvHdrName, bn.BillRmNo) AS guest_name
+            FROM BillsNights bn
+            LEFT JOIN Guests g   ON g.GId = bn.BillGId
+            LEFT JOIN FRSVHDR h  ON h.RsvHdrId = bn.BillMbId
+            WHERE CAST(bn.BillDt AS DATE) >= %s
+              AND CAST(bn.BillDt AS DATE) <= %s
+              AND (bn.BillVoid IS NULL OR bn.BillVoid = 0)
+            ORDER BY bn.BillDt ASC, bn.BillRmNo ASC
+        """, (date_from, date_to))
+        rows = cur.fetchall()
+        conn.close()
+
+        result = []
+        for row in rows:
+            result.append({
+                'bill_date':   str(row['bill_date']),
+                'room_no':     (row['room_no'] or '').strip(),
+                'room_type':   (row['room_type'] or '').strip(),
+                'plan':        (row['plan'] or '').strip(),
+                'room_charge': round(float(row['room_charge'] or 0), 2),
+                'plan_amt':    round(float(row['plan_amt']    or 0), 2),
+                'vat_amt':     round(float(row['vat_amt']     or 0), 2),
+                'tt_amt':      round(float(row['tt_amt']      or 0), 2),
+                'total_amt':   round(float(row['total_amt']   or 0), 2),
+                'is_comp':     bool(row['is_comp']),
+                'guest_name':  (row['guest_name'] or '').strip(),
+            })
+        return add_cors(jsonify(result))
+    except Exception as e:
+        return add_cors(jsonify({'error': str(e)})), 500
+
+
 @app.route('/api/v2/debug/columns', methods=['GET','OPTIONS'])
 @api_key_required
 def v2_debug_columns():
