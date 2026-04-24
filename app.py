@@ -1289,6 +1289,34 @@ def v2_debug_columns():
         return add_cors(jsonify({'error': str(e)})), 500
 
 
+@app.route('/api/v2/debug/sample', methods=['GET','OPTIONS'])
+@api_key_required
+def v2_debug_sample():
+    """Sample TOP N rows from any table (debug)."""
+    if request.method == 'OPTIONS':
+        return add_cors(jsonify({}))
+    try:
+        table = request.args.get('table', 'GLTRAN_MAST')
+        n     = min(int(request.args.get('n', 5)), 50)
+        conn  = get_db()
+        cur   = conn.cursor(as_dict=True)
+        cur.execute(f"SELECT TOP {n} * FROM [{table}]")
+        rows = cur.fetchall()
+        conn.close()
+        result = []
+        for row in rows:
+            r = {}
+            for k, v in row.items():
+                if hasattr(v, 'strftime'):
+                    r[k] = v.strftime('%Y-%m-%d %H:%M:%S')
+                else:
+                    r[k] = v
+            result.append(r)
+        return add_cors(jsonify(result))
+    except Exception as e:
+        return add_cors(jsonify({'error': str(e)})), 500
+
+
 @app.route('/api/v2/spa/sales', methods=['GET','OPTIONS'])
 @api_key_required
 def v2_spa_sales():
