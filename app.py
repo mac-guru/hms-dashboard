@@ -1457,9 +1457,9 @@ def v2_accounts_pl():
                 if not parent:
                     return 'OTHER'
                 if parent == '300015':
-                    return 'DIRECT'    # WebHMS P&L "Direct Expenses"
+                    return 'INDIRECT'  # AC_CHART name: INDIRECT EXPENSES → WebHMS "INDIRECT EXPENSES"
                 if parent == '300016':
-                    return 'INDIRECT'  # WebHMS P&L "Indirect Expenses"
+                    return 'DIRECT'    # AC_CHART name: DIRECT EXPENSES → WebHMS "DIRECT EXPENSES"
                 code = parent
             return 'OTHER'
 
