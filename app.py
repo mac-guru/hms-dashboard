@@ -947,6 +947,113 @@ def v2_bills():
         return add_cors(jsonify({'error': str(e)})), 500
 
 
+@app.route('/api/v2/search', methods=['GET','OPTIONS'])
+@api_key_required
+def v2_search():
+    """Global search across Guests, Bills, BillsNights."""
+    if request.method == 'OPTIONS':
+        return add_cors(jsonify({}))
+    try:
+        q = request.args.get('q', '').strip()
+        if len(q) < 2:
+            return add_cors(jsonify([]))
+
+        like = f'%{q}%'
+        conn = get_db()
+        cur  = conn.cursor(as_dict=True)
+        results = []
+
+        # Guests
+        cur.execute("""
+            SELECT TOP 6 GId, GName, GRmNo, GNat, GCountry,
+                         GArrDt, GDepDt, GGone, GMbId, GPpNo
+            FROM Guests
+            WHERE GName LIKE %s OR GPpNo LIKE %s OR GRmNo LIKE %s
+            ORDER BY GArrDt DESC
+        """, (like, like, like))
+        for row in cur.fetchall():
+            results.append({
+                'type':       'guest',
+                'id':         row['GId'],
+                'title':      (row['GName']    or '').strip(),
+                'room':       (row['GRmNo']    or '').strip(),
+                'nationality':(row['GNat']     or row['GCountry'] or '').strip(),
+                'arr_date':   str(row['GArrDt'])  if row['GArrDt']  else None,
+                'dep_date':   str(row['GDepDt'])  if row['GDepDt']  else None,
+                'is_gone':    bool(row['GGone']),
+                'mb_id':      row['GMbId'],
+                'passport':   (row['GPpNo'] or '').strip(),
+            })
+
+        # Bills
+        cur.execute("""
+            SELECT TOP 6
+                BillNo, BillGuestName, BillCustomerName,
+                ISNULL(BillTot,0) * ISNULL(BillFxRate,1) AS amount,
+                BillRmNo, BillDt, BillCode, BillPmode,
+                ISNULL(BillVat,0) AS vat_amt,
+                ISNULL(BillDiscount,0) AS discount_amt
+            FROM Bills
+            WHERE (BillNo LIKE %s OR BillGuestName LIKE %s
+                   OR BillCustomerName LIKE %s OR BillRmNo LIKE %s)
+              AND (BillVoid IS NULL OR BillVoid = 0)
+            ORDER BY BillDt DESC
+        """, (like, like, like, like))
+        for row in cur.fetchall():
+            pmode = str(row['BillPmode'] or '')
+            pay_label = {'0':'Room/Charge','1':'Cash','3':'Complimentary'}.get(pmode, 'Other')
+            results.append({
+                'type':       'bill',
+                'id':         (row['BillNo'] or '').strip(),
+                'title':      (row['BillGuestName'] or row['BillCustomerName'] or '').strip(),
+                'bill_no':    (row['BillNo'] or '').strip(),
+                'room_no':    (row['BillRmNo'] or '').strip(),
+                'amount':     round(float(row['amount']       or 0), 2),
+                'vat_amt':    round(float(row['vat_amt']      or 0), 2),
+                'discount':   round(float(row['discount_amt'] or 0), 2),
+                'bill_code':  (row['BillCode'] or '').strip(),
+                'pay_label':  pay_label,
+                'date':       row['BillDt'].strftime('%Y-%m-%d') if row['BillDt'] else None,
+                'time':       row['BillDt'].strftime('%H:%M')    if row['BillDt'] else None,
+            })
+
+        # BillsNights (room charge history)
+        cur.execute("""
+            SELECT TOP 6
+                bn.BillRmNo, bn.BillDt, bn.BillPlan, bn.BillRmType,
+                ISNULL(bn.BillTot,0)*ISNULL(bn.BillFxRate,1) AS total_amt,
+                ISNULL(bn.BillRC,0)  AS room_charge,
+                ISNULL(bn.BillVat,0) AS vat_amt,
+                COALESCE(g.GName, h.RsvHdrName) AS guest_name,
+                bn.BillGId
+            FROM BillsNights bn
+            LEFT JOIN Guests  g ON g.GId        = bn.BillGId
+            LEFT JOIN FRSVHDR h ON h.RsvHdrId   = bn.BillMbId
+            WHERE (bn.BillRmNo LIKE %s OR g.GName LIKE %s OR h.RsvHdrName LIKE %s)
+              AND (bn.BillVoid IS NULL OR bn.BillVoid = 0)
+            ORDER BY bn.BillDt DESC
+        """, (like, like, like))
+        for row in cur.fetchall():
+            results.append({
+                'type':       'room_charge',
+                'id':         f"{row['BillRmNo']}_{row['BillDt']}",
+                'title':      (row['guest_name'] or row['BillRmNo'] or '').strip(),
+                'room_no':    (row['BillRmNo']   or '').strip(),
+                'plan':       (row['BillPlan']   or '').strip(),
+                'room_type':  (row['BillRmType'] or '').strip(),
+                'amount':     round(float(row['total_amt']   or 0), 2),
+                'room_charge':round(float(row['room_charge'] or 0), 2),
+                'vat_amt':    round(float(row['vat_amt']     or 0), 2),
+                'date':       row['BillDt'].strftime('%Y-%m-%d') if row['BillDt'] else None,
+                'guest_id':   row['BillGId'],
+            })
+
+        conn.close()
+        return add_cors(jsonify(results))
+    except Exception as e:
+        return add_cors(jsonify({'error': str(e)})), 500
+
+
 @app.route('/api/v2/overview/revenue', methods=['GET','OPTIONS'])
 @api_key_required
 def v2_overview_revenue():
