@@ -1446,8 +1446,20 @@ def v2_accounts_pl():
 
         # ── Classify expenses as Direct (300015 tree) or Indirect (300016 tree) ──
         # WebHMS P&L labels: 300015 subtree = "Direct Expenses", 300016 subtree = "Indirect Expenses"
-        cur.execute("SELECT GL_CODE, ISNULL(MAST_GL_CODE,'') AS MAST_GL_CODE FROM AC_CHART WHERE GL_TYPE='E'")
-        parent_map = {r['GL_CODE'].strip(): r['MAST_GL_CODE'].strip() for r in cur.fetchall()}
+        cur.execute("""
+            SELECT GL_CODE, ISNULL(GL_NAME,'') AS GL_NAME,
+                   ISNULL(MAST_GL_CODE,'') AS MAST_GL_CODE,
+                   ISNULL(GL_GROUP_LEVEL,0) AS GL_GROUP_LEVEL
+            FROM AC_CHART WHERE GL_TYPE='E' ORDER BY GL_CODE
+        """)
+        ac_rows    = cur.fetchall()
+        parent_map = {r['GL_CODE'].strip(): r['MAST_GL_CODE'].strip() for r in ac_rows}
+        expense_tree = [{
+            'gl_code':     r['GL_CODE'].strip(),
+            'gl_name':     r['GL_NAME'].strip(),
+            'parent_code': r['MAST_GL_CODE'].strip(),
+            'gl_level':    int(r['GL_GROUP_LEVEL'] or 0),
+        } for r in ac_rows]
         conn.close()
 
         def get_expense_category(gl_code):
@@ -1490,6 +1502,7 @@ def v2_accounts_pl():
             'expense_gl':           expense_gl,
             'expense_direct':       expense_direct,
             'expense_indirect':     expense_indirect,
+            'expense_tree':         expense_tree,
             'payroll_total':        round(payroll_total, 2),
             'payroll_rows':         [{'dept': r['dept'], 'amount': fv(r['total_amt'])} for r in payroll_rows],
             # Totals — use GL as authoritative source
