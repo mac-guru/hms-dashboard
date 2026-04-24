@@ -1511,6 +1511,98 @@ def v2_debug_sample():
         return add_cors(jsonify({'error': str(e)})), 500
 
 
+@app.route('/api/v2/debug/pl_detail', methods=['GET','OPTIONS'])
+@api_key_required
+def v2_debug_pl_detail():
+    """Diagnose P&L data: count Transactions by REF type and GLTRAN_DETL GL types."""
+    if request.method == 'OPTIONS':
+        return add_cors(jsonify({}))
+    try:
+        date_from = request.args.get('date_from', '2026-03-15')
+        date_to   = request.args.get('date_to',   '2026-04-13')
+        conn = get_db()
+        cur  = conn.cursor(as_dict=True)
+
+        # 1. Count/sum Transactions by REF type for the date range
+        cur.execute("""
+            SELECT T_REF,
+                   COUNT(*) AS cnt,
+                   SUM(ISNULL(T_AMT,0)) AS total_amt,
+                   SUM(CASE WHEN T_DES IS NOT NULL THEN 1 ELSE 0 END) AS with_des
+            FROM Transactions
+            WHERE CAST(T_DT AS DATE) >= %s AND CAST(T_DT AS DATE) <= %s
+            GROUP BY T_REF
+        """, (date_from, date_to))
+        trx_by_ref = [dict(r) for r in cur.fetchall()]
+
+        # 2. Count GLTRAN_DETL entries matching Transactions by VCH_NO in date range
+        cur.execute("""
+            SELECT ac.GL_TYPE,
+                   COUNT(DISTINCT gtd.VCH_NO) AS vch_count,
+                   COUNT(*) AS line_count,
+                   SUM(CASE WHEN gtd.GL_DR_CR='DR' THEN ISNULL(gtd.GL_LC_AMT,0) ELSE 0 END) AS dr_total,
+                   SUM(CASE WHEN gtd.GL_DR_CR='CR' THEN ISNULL(gtd.GL_LC_AMT,0) ELSE 0 END) AS cr_total
+            FROM GLTRAN_DETL gtd
+            JOIN AC_CHART ac ON ac.GL_CODE = gtd.GL_CODE
+            WHERE EXISTS (
+                SELECT 1 FROM Transactions t
+                WHERE t.T_DES = gtd.VCH_NO
+                  AND CAST(t.T_DT AS DATE) >= %s
+                  AND CAST(t.T_DT AS DATE) <= %s
+            )
+            GROUP BY ac.GL_TYPE
+        """, (date_from, date_to))
+        gl_by_type = [dict(r) for r in cur.fetchall()]
+
+        # 3. Check VCH_NO prefixes in GLTRAN_DETL that match Transactions dates
+        cur.execute("""
+            SELECT LEFT(gtd.VCH_NO, 3) AS vch_prefix,
+                   COUNT(DISTINCT gtd.VCH_NO) AS vch_count,
+                   COUNT(*) AS line_count
+            FROM GLTRAN_DETL gtd
+            WHERE EXISTS (
+                SELECT 1 FROM Transactions t
+                WHERE t.T_DES = gtd.VCH_NO
+                  AND CAST(t.T_DT AS DATE) >= %s
+                  AND CAST(t.T_DT AS DATE) <= %s
+            )
+            GROUP BY LEFT(gtd.VCH_NO, 3)
+        """, (date_from, date_to))
+        vch_prefixes = [dict(r) for r in cur.fetchall()]
+
+        # 4. Total Transactions.T_AMT for the date range (by REF), full picture
+        cur.execute("""
+            SELECT T_REF,
+                   SUM(ISNULL(T_AMT,0)) AS total_t_amt
+            FROM Transactions
+            WHERE CAST(T_DT AS DATE) >= %s AND CAST(T_DT AS DATE) <= %s
+              AND T_DES IS NOT NULL
+            GROUP BY T_REF
+        """, (date_from, date_to))
+        trx_with_des = [dict(r) for r in cur.fetchall()]
+
+        # 5. Check if there are Iss-type entries in GLTRAN_DETL
+        cur.execute("""
+            SELECT TOP 5 VCH_NO, GL_CODE, GL_DR_CR, GL_LC_AMT
+            FROM GLTRAN_DETL
+            WHERE VCH_NO LIKE 'Iss%'
+        """)
+        iss_sample = [dict(r) for r in cur.fetchall()]
+
+        conn.close()
+        return add_cors(jsonify({
+            'date_from':      date_from,
+            'date_to':        date_to,
+            'trx_by_ref':     trx_by_ref,
+            'trx_with_des':   trx_with_des,
+            'gl_by_type':     gl_by_type,
+            'vch_prefixes':   vch_prefixes,
+            'iss_sample':     iss_sample,
+        }))
+    except Exception as e:
+        return add_cors(jsonify({'error': str(e)})), 500
+
+
 @app.route('/api/v2/spa/sales', methods=['GET','OPTIONS'])
 @api_key_required
 def v2_spa_sales():
