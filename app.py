@@ -1351,10 +1351,11 @@ def v2_accounts_pl():
             'by_code':      {k: v['total'] for k, v in revenue_by_code.items()},
         }
 
-        # ── 2. Expenses from GL ledger (via Transactions for dates) ──
-        # GLTRAN_MAST only has CON.../CN... vouchers and does NOT link to
-        # GLTRAN_DETL (which has Pur.../JV.../SV... vouchers).
-        # Use Transactions.T_DES = GLTRAN_DETL.VCH_NO as the date bridge.
+        # ── 2. Expenses from GL ledger (dual date source) ────────────
+        # Two GL posting paths in WebHMS:
+        #   A) Store/inventory module:  Transactions.T_DES → GLTRAN_DETL.VCH_NO  (JV005xxx, Purxxx)
+        #   B) Manual journal vouchers: GLTRAN_MAST.VCH_NO → GLTRAN_DETL.VCH_NO (JV004xxx)
+        # Both share the same GLTRAN_DETL table, so combine via OR EXISTS.
         cur.execute("""
             SELECT
                 ac.GL_CODE,
@@ -1367,15 +1368,26 @@ def v2_accounts_pl():
             FROM GLTRAN_DETL gtd
             JOIN AC_CHART ac ON ac.GL_CODE = gtd.GL_CODE
             WHERE ac.GL_TYPE IN ('E','I')
-              AND EXISTS (
-                  SELECT 1 FROM Transactions t
-                  WHERE t.T_DES = gtd.VCH_NO
-                    AND CAST(t.T_DT AS DATE) >= %s
-                    AND CAST(t.T_DT AS DATE) <= %s
+              AND (
+                  -- Path A: store/inventory module (JV005xxx, Purxxx) — date from Transactions
+                  EXISTS (
+                      SELECT 1 FROM Transactions t
+                      WHERE t.T_DES = gtd.VCH_NO
+                        AND CAST(t.T_DT AS DATE) >= %s
+                        AND CAST(t.T_DT AS DATE) <= %s
+                  )
+                  OR
+                  -- Path B: manual journal vouchers (JV004xxx) — date from GLTRAN_MAST
+                  EXISTS (
+                      SELECT 1 FROM GLTRAN_MAST gtm
+                      WHERE gtm.VCH_NO = gtd.VCH_NO
+                        AND CAST(gtm.VCH_EDATE AS DATE) >= %s
+                        AND CAST(gtm.VCH_EDATE AS DATE) <= %s
+                  )
               )
             GROUP BY ac.GL_CODE, ac.GL_NAME, ac.MAST_GL_CODE, ac.GL_TYPE, ac.GL_GROUP_LEVEL
             ORDER BY ac.GL_CODE
-        """, (date_from, date_to))
+        """, (date_from, date_to, date_from, date_to))
         gl_rows = cur.fetchall()
 
         gl_entries = []
