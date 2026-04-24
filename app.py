@@ -1362,8 +1362,8 @@ def v2_accounts_pl():
                 ISNULL(ac.MAST_GL_CODE,'') AS MAST_GL_CODE,
                 ac.GL_TYPE,
                 ISNULL(ac.GL_GROUP_LEVEL, 0) AS GL_GROUP_LEVEL,
-                SUM(CASE WHEN gtd.GL_DR_CR='D' THEN ISNULL(gtd.GL_LC_AMT,0) ELSE 0 END) AS dr_amt,
-                SUM(CASE WHEN gtd.GL_DR_CR='C' THEN ISNULL(gtd.GL_LC_AMT,0) ELSE 0 END) AS cr_amt
+                SUM(CASE WHEN gtd.GL_DR_CR='DR' THEN ISNULL(gtd.GL_LC_AMT,0) ELSE 0 END) AS dr_amt,
+                SUM(CASE WHEN gtd.GL_DR_CR='CR' THEN ISNULL(gtd.GL_LC_AMT,0) ELSE 0 END) AS cr_amt
             FROM GLTRAN_DETL gtd
             JOIN AC_CHART ac ON ac.GL_CODE = gtd.GL_CODE
             WHERE ac.GL_TYPE IN ('E','I')
@@ -1384,6 +1384,7 @@ def v2_accounts_pl():
             cr  = fv(row['cr_amt'])
             typ = (row['GL_TYPE'] or '').strip().upper()
             # Income: net = CR - DR  |  Expense: net = DR - CR
+            # Note: GL_DR_CR uses full words 'DR'/'CR' (not 'D'/'C')
             net = (cr - dr) if typ == 'I' else (dr - cr)
             gl_entries.append({
                 'gl_code':     (row['GL_CODE']      or '').strip(),
@@ -1482,11 +1483,18 @@ def v2_debug_sample():
     if request.method == 'OPTIONS':
         return add_cors(jsonify({}))
     try:
-        table = request.args.get('table', 'GLTRAN_MAST')
-        n     = min(int(request.args.get('n', 5)), 50)
-        conn  = get_db()
-        cur   = conn.cursor(as_dict=True)
-        cur.execute(f"SELECT TOP {n} * FROM [{table}]")
+        table   = request.args.get('table', 'GLTRAN_MAST')
+        n       = min(int(request.args.get('n', 5)), 50)
+        order   = request.args.get('order', '')   # e.g. "T_DT DESC"
+        where   = request.args.get('where', '')   # e.g. "T_DES IS NOT NULL"
+        conn    = get_db()
+        cur     = conn.cursor(as_dict=True)
+        sql = f"SELECT TOP {n} * FROM [{table}]"
+        if where:
+            sql += f" WHERE {where}"
+        if order:
+            sql += f" ORDER BY {order}"
+        cur.execute(sql)
         rows = cur.fetchall()
         conn.close()
         result = []
