@@ -1048,6 +1048,59 @@ def v2_spa_sales():
         return add_cors(jsonify({'error': str(e)})), 500
 
 
+@app.route('/api/v2/restaurant/dish-report', methods=['GET','OPTIONS'])
+@api_key_required
+def v2_restaurant_dish_report():
+    """Dish-wise sales report — qty sold and amount per menu item."""
+    if request.method == 'OPTIONS':
+        return add_cors(jsonify({}))
+    try:
+        date_from = request.args.get('date_from', datetime.now().strftime('%Y-%m-%d'))
+        date_to   = request.args.get('date_to',   datetime.now().strftime('%Y-%m-%d'))
+        outlet    = request.args.get('outlet', '')   # RES | BAR | '' = all
+
+        if outlet == 'RES':
+            pos_filter = "AND bi.BItmPOS = 'RES'"
+        elif outlet == 'BAR':
+            pos_filter = "AND bi.BItmPOS = 'BAR'"
+        else:
+            pos_filter = "AND bi.BItmPOS IN ('RES','BAR')"
+
+        conn = get_db()
+        cur  = conn.cursor(as_dict=True)
+        cur.execute(f"""
+            SELECT
+                m.MenuName                                   AS dish_name,
+                bi.BItmPOS                                   AS pos_code,
+                SUM(ISNULL(bi.BItmQty, 0))                  AS total_qty,
+                AVG(ISNULL(bi.BItmPrice, 0))                AS avg_price,
+                SUM(ISNULL(bi.BitmTotAmt, 0))               AS total_amount
+            FROM BillItems bi
+            JOIN Menu   m ON m.MenuId = bi.BItmMenuId
+            JOIN Covers c ON c.CvId   = bi.BItmCvId
+            WHERE CAST(c.CvDt AS DATE) >= %s
+              AND CAST(c.CvDt AS DATE) <= %s
+              {pos_filter}
+            GROUP BY m.MenuName, bi.BItmPOS
+            ORDER BY SUM(ISNULL(bi.BitmTotAmt, 0)) DESC
+        """, (date_from, date_to))
+        rows = cur.fetchall()
+        conn.close()
+
+        result = []
+        for row in rows:
+            result.append({
+                'dish_name':    (row['dish_name'] or '').strip(),
+                'outlet':       'Restaurant' if row['pos_code'] == 'RES' else 'Bar',
+                'total_qty':    round(float(row['total_qty']    or 0), 2),
+                'avg_price':    round(float(row['avg_price']    or 0), 2),
+                'total_amount': round(float(row['total_amount'] or 0), 2),
+            })
+        return add_cors(jsonify(result))
+    except Exception as e:
+        return add_cors(jsonify({'error': str(e)})), 500
+
+
 @app.route('/api/v2/restaurant/sales', methods=['GET','OPTIONS'])
 @api_key_required
 def v2_restaurant_sales():
