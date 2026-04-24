@@ -1446,6 +1446,32 @@ def v2_accounts_pl():
         gl_revenue_total  = sum(e['net_amount'] for e in income_gl)
         operational_income = sum(e['net_amount'] for e in operational_income_gl)
 
+        # ── Classify expenses as Direct (300015 tree) or Indirect (300016 tree) ──
+        # WebHMS P&L labels: 300015 subtree = "Direct Expenses", 300016 subtree = "Indirect Expenses"
+        cur.execute("SELECT GL_CODE, ISNULL(MAST_GL_CODE,'') AS MAST_GL_CODE FROM AC_CHART WHERE GL_TYPE='E'")
+        parent_map = {r['GL_CODE'].strip(): r['MAST_GL_CODE'].strip() for r in cur.fetchall()}
+
+        def get_expense_category(gl_code):
+            code = gl_code.strip()
+            for _ in range(10):
+                parent = parent_map.get(code, '')
+                if not parent:
+                    return 'OTHER'
+                if parent == '300015':
+                    return 'DIRECT'    # WebHMS P&L "Direct Expenses"
+                if parent == '300016':
+                    return 'INDIRECT'  # WebHMS P&L "Indirect Expenses"
+                code = parent
+            return 'OTHER'
+
+        for e in expense_gl:
+            e['expense_category'] = get_expense_category(e['gl_code'])
+
+        expense_direct   = [e for e in expense_gl if e['expense_category'] == 'DIRECT']
+        expense_indirect = [e for e in expense_gl if e['expense_category'] == 'INDIRECT']
+        total_direct     = round(sum(e['net_amount'] for e in expense_direct), 2)
+        total_indirect   = round(sum(e['net_amount'] for e in expense_indirect), 2)
+
         total_gl_expenses = sum(e['net_amount'] for e in expense_gl)
         total_expenses    = round(total_gl_expenses + payroll_total, 2)
         # Net profit uses full GL revenue (incl. below-line) minus expenses
@@ -1463,11 +1489,15 @@ def v2_accounts_pl():
             'operational_income_gl': operational_income_gl,
             'below_line_gl':        below_line_gl,
             'expense_gl':           expense_gl,
+            'expense_direct':       expense_direct,
+            'expense_indirect':     expense_indirect,
             'payroll_total':        round(payroll_total, 2),
             'payroll_rows':         [{'dept': r['dept'], 'amount': fv(r['total_amt'])} for r in payroll_rows],
             # Totals — use GL as authoritative source
             'total_revenue':        round(gl_revenue_total, 2),
             'operational_income':   round(operational_income, 2),
+            'total_direct':         total_direct,
+            'total_indirect':       total_indirect,
             'total_expenses':       total_expenses,
             'net_profit':           net_profit,
         }))
