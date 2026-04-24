@@ -1134,7 +1134,7 @@ def v2_overview_revenue():
         conn = get_db()
         cur  = conn.cursor(as_dict=True)
 
-        # Room revenue from BillsNights
+        # Room revenue from BillsNights (include complimentary — matches WebHMS total)
         cur.execute("""
             SELECT
                 ISNULL(SUM(ISNULL(BillTot,0) * ISNULL(BillFxRate,1)), 0) AS room_revenue,
@@ -1143,7 +1143,6 @@ def v2_overview_revenue():
             WHERE CAST(BillDt AS DATE) >= %s
               AND CAST(BillDt AS DATE) <= %s
               AND (BillVoid IS NULL OR BillVoid = 0)
-              AND (BillIsComp IS NULL OR BillIsComp = 0)
         """, (date_from, date_to))
         room = cur.fetchone()
 
