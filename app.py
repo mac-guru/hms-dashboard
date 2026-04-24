@@ -877,15 +877,82 @@ def v2_reservations():
 @app.route('/api/v2/bills', methods=['GET','OPTIONS'])
 @api_key_required
 def v2_bills():
-    """Bills / folio for a room or date range."""
+    """Bills / folio for a room or date range. Also supports mb_id for MasterBill folio."""
     if request.method == 'OPTIONS':
         return add_cors(jsonify({}))
     try:
-        room = request.args.get('room', '')
-        days = int(request.args.get('days', 90))
-        conn = get_db()
-        cur  = conn.cursor(as_dict=True)
+        mb_id = request.args.get('mb_id', '').strip()
+        room  = request.args.get('room', '')
+        days  = int(request.args.get('days', 90))
+        conn  = get_db()
+        cur   = conn.cursor(as_dict=True)
 
+        # ── MasterBill folio (by MbId) ─────────────────────────────
+        if mb_id:
+            # Get room + stay dates from MBLink
+            cur.execute("""
+                SELECT MBL_RMLST, MBL_ARRDT, MBL_DEPDT
+                FROM MBLink
+                WHERE MBL_MBID = %s
+            """, (int(mb_id),))
+            link = cur.fetchone()
+            if not link:
+                conn.close()
+                return add_cors(jsonify([]))
+
+            # MBL_RMLST may be comma-separated; take the first room
+            mb_room  = (link['MBL_RMLST'] or '').strip().split(',')[0].strip()
+            arr_dt   = link['MBL_ARRDT']
+            dep_dt   = link['MBL_DEPDT']
+
+            # F&B / Spa bills for this room within the stay dates
+            cur.execute("""
+                SELECT b.BillRmNo AS room_no, b.BillDt AS bill_date,
+                       b.BillCode AS bill_code, bd.BD_DES AS bill_desc,
+                       ISNULL(b.BillTot,0)*ISNULL(b.BillFxRate,1) AS bill_total_npr,
+                       b.BillPmode AS payment_mode, b.BillReceiptNo AS receipt_no
+                FROM Bills b
+                LEFT JOIN BillDesc bd ON bd.BD_CODE = b.BillCode
+                WHERE b.BillRmNo = %s
+                  AND CAST(b.BillDt AS DATE) >= CAST(%s AS DATE)
+                  AND CAST(b.BillDt AS DATE) <= DATEADD(day, 1, CAST(%s AS DATE))
+                  AND (b.BillVoid IS NULL OR b.BillVoid = 0)
+                ORDER BY b.BillDt
+            """, (mb_room, arr_dt, dep_dt))
+            bill_rows = cur.fetchall()
+
+            # Room charges from BillsNights (linked by BillMbId)
+            cur.execute("""
+                SELECT bn.BillRmNo AS room_no, bn.BillDt AS bill_date,
+                       'RC'           AS bill_code,
+                       'Room Charge'  AS bill_desc,
+                       ISNULL(bn.BillTot,0)*ISNULL(bn.BillFxRate,1) AS bill_total_npr,
+                       '0'            AS payment_mode,
+                       NULL           AS receipt_no
+                FROM BillsNights bn
+                WHERE bn.BillMbId = %s
+                  AND (bn.BillVoid IS NULL OR bn.BillVoid = 0)
+                ORDER BY bn.BillDt
+            """, (int(mb_id),))
+            night_rows = cur.fetchall()
+
+            conn.close()
+            result = []
+            for row in bill_rows + night_rows:
+                result.append({
+                    'room_no':        (row['room_no'] or '').strip(),
+                    'bill_date':      row['bill_date'].strftime('%Y-%m-%d') if row['bill_date'] else None,
+                    'bill_time':      row['bill_date'].strftime('%H:%M')    if row['bill_date'] else None,
+                    'bill_code':      (row['bill_code'] or '').strip(),
+                    'bill_desc':      (row['bill_desc'] or row['bill_code'] or '').strip(),
+                    'bill_total_npr': round(float(row['bill_total_npr'] or 0), 2),
+                    'payment_mode':   str(row['payment_mode'] or '0'),
+                    'receipt_no':     row['receipt_no'],
+                })
+            result.sort(key=lambda x: x['bill_date'] or '')
+            return add_cors(jsonify(result))
+
+        # ── Legacy: folio by room + days ──────────────────────────
         where = f"CAST(BillDt AS DATE) >= DATEADD(day, -{days}, CAST(GETDATE() AS DATE))"
         if room:
             where += f" AND BillRmNo = '{room}'"
@@ -963,12 +1030,13 @@ def v2_search():
         cur  = conn.cursor(as_dict=True)
         results = []
 
-        # Guests
+        # Guests — only those with a master bill (active or checked-out)
         cur.execute("""
             SELECT TOP 6 GId, GName, GRmNo, GNat, GCountry,
                          GArrDt, GDepDt, GGone, GMbId, GPpNo
             FROM Guests
-            WHERE GName LIKE %s OR GPpNo LIKE %s OR GRmNo LIKE %s
+            WHERE (GName LIKE %s OR GPpNo LIKE %s OR GRmNo LIKE %s)
+              AND GMbId IS NOT NULL
             ORDER BY GArrDt DESC
         """, (like, like, like))
         for row in cur.fetchall():
