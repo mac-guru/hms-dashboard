@@ -1431,25 +1431,45 @@ def v2_accounts_pl():
 
         conn.close()
 
+        # GL_TYPE='I' entries: revenue recognized in accounting books (most accurate for P&L)
+        # GL_TYPE='E' entries: expenses
         income_gl  = [e for e in gl_entries if e['gl_type'] == 'I']
         expense_gl = [e for e in gl_entries if e['gl_type'] == 'E' and e['net_amount'] != 0]
 
+        # Separate "Loss & Gain" / FX adjustment accounts (below-the-line in WebHMS P&L)
+        # Typically GL codes 400016-ish — anything that isn't a direct revenue centre
+        below_line_codes = {'400016'}   # extend if needed
+        operational_income_gl = [e for e in income_gl if e['gl_code'] not in below_line_codes]
+        below_line_gl         = [e for e in income_gl if e['gl_code'] in below_line_codes]
+
+        # Primary revenue figure = GL income accounts (matches WebHMS P&L)
+        gl_revenue_total  = sum(e['net_amount'] for e in income_gl)
+        operational_income = sum(e['net_amount'] for e in operational_income_gl)
+
         total_gl_expenses = sum(e['net_amount'] for e in expense_gl)
         total_expenses    = round(total_gl_expenses + payroll_total, 2)
-        net_profit        = round(total_revenue - total_expenses, 2)
+        # Net profit uses full GL revenue (incl. below-line) minus expenses
+        net_profit        = round(gl_revenue_total - total_expenses, 2)
 
         return add_cors(jsonify({
-            'date_from':      date_from,
-            'date_to':        date_to,
-            'revenue':        revenue,
-            'gl_entries':     gl_entries,
-            'income_gl':      income_gl,
-            'expense_gl':     expense_gl,
-            'payroll_total':  round(payroll_total, 2),
-            'payroll_rows':   [{'dept': r['dept'], 'amount': fv(r['total_amt'])} for r in payroll_rows],
-            'total_revenue':  round(total_revenue, 2),
-            'total_expenses': total_expenses,
-            'net_profit':     net_profit,
+            'date_from':            date_from,
+            'date_to':              date_to,
+            # Bills-based breakdown (department detail, may differ slightly from GL totals)
+            'revenue':              revenue,
+            'bills_total_revenue':  round(total_revenue, 2),
+            # GL-based figures (accounting books — used for P&L totals)
+            'gl_entries':           gl_entries,
+            'income_gl':            income_gl,
+            'operational_income_gl': operational_income_gl,
+            'below_line_gl':        below_line_gl,
+            'expense_gl':           expense_gl,
+            'payroll_total':        round(payroll_total, 2),
+            'payroll_rows':         [{'dept': r['dept'], 'amount': fv(r['total_amt'])} for r in payroll_rows],
+            # Totals — use GL as authoritative source
+            'total_revenue':        round(gl_revenue_total, 2),
+            'operational_income':   round(operational_income, 2),
+            'total_expenses':       total_expenses,
+            'net_profit':           net_profit,
         }))
     except Exception as e:
         return add_cors(jsonify({'error': str(e)})), 500
