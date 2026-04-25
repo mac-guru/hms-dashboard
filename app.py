@@ -1956,6 +1956,22 @@ def v2_occupancy():
         today_checkouts = checkouts_on(selected)
         yest_checkouts  = checkouts_on(yesterday)
 
+        def cash_on(d):
+            """Total cash received on date d — sums Bills rows flagged as
+            cash payment (BillPmode = 1), matching the audit report's
+            'Cash Received' column."""
+            cur.execute("""
+                SELECT ISNULL(SUM(ISNULL(BillTot, 0)), 0) AS cash
+                FROM Bills
+                WHERE CAST(BillDt AS DATE) = %s
+                  AND (BillVoid IS NULL OR BillVoid = 0)
+                  AND BillPmode = 1
+            """, (d,))
+            return float((cur.fetchone() or {}).get('cash') or 0)
+
+        today_cash = round(cash_on(selected), 2)
+        yest_cash  = round(cash_on(yesterday), 2)
+
         def period_room_nights(start_str):
             """Sum of room-nights over [start, period_end] from Bills RC."""
             if not start_str:
@@ -1992,8 +2008,8 @@ def v2_occupancy():
         return add_cors(jsonify({
             'date':        str(selected),
             'total_rooms': total_rooms,
-            'today':     {'rooms': today_rooms, 'pax': today_pax, 'pct': pct(today_rooms, total_rooms), 'checkouts': today_checkouts},
-            'yesterday': {'rooms': yest_rooms,  'pax': yest_pax,  'pct': pct(yest_rooms,  total_rooms), 'checkouts': yest_checkouts},
+            'today':     {'rooms': today_rooms, 'pax': today_pax, 'pct': pct(today_rooms, total_rooms), 'checkouts': today_checkouts, 'cash_received': today_cash},
+            'yesterday': {'rooms': yest_rooms,  'pax': yest_pax,  'pct': pct(yest_rooms,  total_rooms), 'checkouts': yest_checkouts, 'cash_received': yest_cash},
             'mtd':       mtd,
             'fy':        fy,
         }))
