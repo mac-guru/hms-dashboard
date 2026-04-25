@@ -755,6 +755,9 @@ def v2_guests():
             LEFT JOIN RoomType rt ON TRY_CAST(r.RmType AS INT) = rt.RmTypSeq
             LEFT JOIN FRSVHDR h ON h.RsvHdrId = g.GRsvHdrId
             WHERE g.GGone = 0
+              AND r.RmAvl = 0
+              AND g.GRmNo IS NOT NULL
+              AND g.GRmNo <> ''
             ORDER BY g.GRmNo
         """)
         rows = cur.fetchall()
@@ -1926,21 +1929,34 @@ def v2_stats():
         """, (selected.date(),))
         rev = cur.fetchone() or {}
 
-        # Real in-house rooms + pax from checked-in reservations
-        # dep > today excludes guests departing today (already checked out)
+        # Real in-house rooms: count rack-occupied rooms (RmAvl=0) that have
+        # at least one checked-in FRSVDet record. The earlier `dep > today`
+        # filter excluded guests who extended their stay — FRSVDet dep dates
+        # go stale, while the rack flag stays = 0 as long as they're physically
+        # in the room.
         cur.execute("""
-            SELECT
-                COUNT(*)                             AS rooms,
-                ISNULL(SUM(ISNULL(RsvDetPax, 1)), 0) AS pax
-            FROM FRSVDet
-            WHERE RsvDetCheckIn = 1
-              AND RsvDetStat     = 'open'
-              AND CAST(RsvDetArrDt AS DATE) <= %s
-              AND CAST(RsvDetDepDt AS DATE) >  %s
-        """, (selected.date(), selected.date()))
-        ih = cur.fetchone() or {}
-        inhouse_rooms = int(ih.get('rooms', 0))
-        inhouse_pax   = int(ih.get('pax',   0))
+            SELECT COUNT(DISTINCT r.RmNo) AS rooms
+            FROM Rooms r
+            INNER JOIN FRSVDet d
+                    ON d.RsvDetRmCode = r.RmNo
+                   AND d.RsvDetCheckIn = 1
+                   AND d.RsvDetStat    = 'open'
+            WHERE r.RmAvl = 0
+        """)
+        inhouse_rooms = int((cur.fetchone() or {}).get('rooms', 0))
+
+        cur.execute("""
+            SELECT ISNULL(SUM(ISNULL(r.RmPax, 1)), 0) AS pax
+            FROM Rooms r
+            WHERE r.RmAvl = 0
+              AND EXISTS (
+                SELECT 1 FROM FRSVDet d
+                WHERE d.RsvDetRmCode = r.RmNo
+                  AND d.RsvDetCheckIn = 1
+                  AND d.RsvDetStat    = 'open'
+              )
+        """)
+        inhouse_pax = int((cur.fetchone() or {}).get('pax', 0))
 
         # Yesterday occupancy + pax from night-audit Audit table
         yesterday = selected - timedelta(days=1)
