@@ -1926,9 +1926,31 @@ def v2_stats():
         """, (selected.date(),))
         rev = cur.fetchone() or {}
 
-        # In-house count
-        cur.execute("SELECT COUNT(*) as cnt FROM Guests WHERE GGone = 0")
-        in_house = (cur.fetchone() or {}).get('cnt', 0)
+        # Real in-house rooms + pax from checked-in reservations
+        # dep date strictly > today means they are NOT departing today
+        cur.execute("""
+            SELECT
+                COUNT(*)                             AS rooms,
+                ISNULL(SUM(ISNULL(RsvDetPax, 1)), 0) AS pax
+            FROM FRSVDet
+            WHERE RsvDetCheckIn = 1
+              AND RsvDetStat     = 'open'
+              AND CAST(RsvDetArrDt AS DATE) <= %s
+              AND CAST(RsvDetDepDt AS DATE) >  %s
+        """, (selected.date(), selected.date()))
+        ih = cur.fetchone() or {}
+        inhouse_rooms = int(ih.get('rooms', 0))
+        inhouse_pax   = int(ih.get('pax',   0))
+
+        # Yesterday occupancy + pax from night-audit Audit table
+        yesterday = selected - timedelta(days=1)
+        cur.execute("""
+            SELECT TOP 1 * FROM Audit
+            WHERE CAST(AuditDate AS DATE) = %s
+        """, (yesterday.date(),))
+        audit_y = cur.fetchone() or {}
+        yest_rooms = int(fv(audit_y.get('OccRm_T') or audit_y.get('ArrRm_T') or 0))
+        yest_pax   = int(fv(audit_y.get('Pax_T', 0)))
 
         conn.close()
 
@@ -1942,7 +1964,7 @@ def v2_stats():
         total_rev = room_rev + plan_rev + food_rev + bev_rev + spa_rev + lau_rev + mbar_rev
 
         occupied  = rack.get(0, 0)
-        occ_pct   = round(occupied / TOTAL_ROOMS * 100, 1) if TOTAL_ROOMS else 0
+        occ_pct   = round(inhouse_rooms / TOTAL_ROOMS * 100, 1) if TOTAL_ROOMS else 0
 
         return add_cors(jsonify({
             'date':        selected.strftime('%Y-%m-%d'),
@@ -1957,7 +1979,10 @@ def v2_stats():
                 'house_use':     rack.get(7, 0),
             },
             'occupancy_pct': occ_pct,
-            'in_house':      int(in_house),
+            'inhouse_rooms': inhouse_rooms,
+            'inhouse_pax':   inhouse_pax,
+            'yest_rooms':    yest_rooms,
+            'yest_pax':      yest_pax,
             'arrivals':      int(arrivals),
             'departures':    int(departures),
             'revenue': {
