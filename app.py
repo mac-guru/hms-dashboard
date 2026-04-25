@@ -1922,14 +1922,15 @@ def v2_occupancy():
                 """)
                 row = cur.fetchone() or {}
                 return int(row.get('rooms') or 0), int(row.get('pax') or 0)
-            # Past date: distinct rooms from FRSVDet whose stay covers d
+            # Past date: distinct rooms used at any point during d
+            # (includes morning checkouts — matches WebHMS).
             cur.execute("""
                 SELECT COUNT(DISTINCT d.RsvRmId) AS rooms
                 FROM FRSVDet d
                 WHERE d.RsvDetStat != 'X'
                   AND d.RsvRmId IS NOT NULL
                   AND CAST(d.RsvDetArrDt AS DATE) <= %s
-                  AND CAST(d.RsvDetDepDt AS DATE) >  %s
+                  AND CAST(d.RsvDetDepDt AS DATE) >= %s
             """, (d, d))
             rooms = int((cur.fetchone() or {}).get('rooms') or 0)
             cur.execute("""
@@ -1937,7 +1938,7 @@ def v2_occupancy():
                 FROM FRSVDet
                 WHERE RsvDetStat != 'X'
                   AND CAST(RsvDetArrDt AS DATE) <= %s
-                  AND CAST(RsvDetDepDt AS DATE) >  %s
+                  AND CAST(RsvDetDepDt AS DATE) >= %s
             """, (d, d))
             pax = int((cur.fetchone() or {}).get('pax') or 0)
             return rooms, pax
