@@ -1896,12 +1896,17 @@ def v2_occupancy():
     if request.method == 'OPTIONS':
         return add_cors(jsonify({}))
     try:
-        date_param = request.args.get('date')
-        mtd_start  = request.args.get('mtd_start')
-        fy_start   = request.args.get('fy_start')
-        selected   = (datetime.strptime(date_param, '%Y-%m-%d').date()
-                      if date_param else datetime.now().date())
-        yesterday  = selected - timedelta(days=1)
+        date_param   = request.args.get('date')
+        mtd_start    = request.args.get('mtd_start')
+        fy_start     = request.args.get('fy_start')
+        period_end_p = request.args.get('period_end')
+        selected     = (datetime.strptime(date_param, '%Y-%m-%d').date()
+                        if date_param else datetime.now().date())
+        # period_end controls MTD/FY upper bound; lets the dashboard hold
+        # MTD/FY stable when the user navigates day-to-day within a month.
+        period_end   = (datetime.strptime(period_end_p, '%Y-%m-%d').date()
+                        if period_end_p else selected)
+        yesterday    = selected - timedelta(days=1)
 
         conn = get_db()
         cur  = conn.cursor(as_dict=True)
@@ -1952,24 +1957,22 @@ def v2_occupancy():
         yest_checkouts  = checkouts_on(yesterday)
 
         def period_room_nights(start_str):
-            """Sum of room-nights over [start, selected] from Bills RC stays."""
+            """Sum of room-nights over [start, period_end] from Bills RC."""
             if not start_str:
                 return None
             try:
                 start_dt = datetime.strptime(start_str, '%Y-%m-%d').date()
             except Exception:
                 return None
-            # Sum daily RC folio postings over [start, selected] —
-            # consistent with date_count for past dates (matches WebHMS audit).
             cur.execute("""
                 SELECT COUNT(*) AS rn
                 FROM Bills
                 WHERE BillCode = 'RC'
                   AND (BillVoid IS NULL OR BillVoid = 0)
                   AND CAST(BillDt AS DATE) BETWEEN %s AND %s
-            """, (start_dt, selected))
+            """, (start_dt, period_end))
             occupied_rn   = int((cur.fetchone() or {}).get('rn') or 0)
-            expected_days = (selected - start_dt).days + 1
+            expected_days = (period_end - start_dt).days + 1
             total_rn      = total_rooms * expected_days
             return {
                 'occupied_rn':  occupied_rn,
