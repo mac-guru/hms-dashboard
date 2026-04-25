@@ -1886,13 +1886,12 @@ def v2_restaurant_sales():
 def v2_occupancy():
     """Occupancy metrics for selected date + yesterday + arbitrary period (MTD, FY).
 
-    Source: Bills table with BillCode='RC' (room charge). Matches the WebHMS
-    'In-House Occupancy' report, which is the operational truth (counts rooms
-    with active billing folios on a given date).
-
-    Earlier versions used the Audit table; that data is unreliable because the
-    night-audit hasn't always been run for recent days, and the Audit's Occ_T
-    column doesn't match what staff see in WebHMS reports.
+    Source matches WebHMS:
+      - Current day: Rooms.RmAvl=0 (live rack flag — same as /api/v2/stats).
+      - Past dates: distinct FRSVDet rooms with an active stay covering the date.
+        Bills RC undercounts (RC isn't posted until night audit, comp/house-use
+        rooms have no RC), and Audit is unreliable when the night audit hasn't
+        been run.
     """
     if request.method == 'OPTIONS':
         return add_cors(jsonify({}))
@@ -1903,6 +1902,7 @@ def v2_occupancy():
         selected   = (datetime.strptime(date_param, '%Y-%m-%d').date()
                       if date_param else datetime.now().date())
         yesterday  = selected - timedelta(days=1)
+        today      = datetime.now().date()
 
         conn = get_db()
         cur  = conn.cursor(as_dict=True)
@@ -1912,18 +1912,26 @@ def v2_occupancy():
         total_rooms = int((cur.fetchone() or {}).get('total', 0)) or 27
 
         def date_count(d):
-            """Distinct rooms + pax with an active stay covering date d."""
+            """Rooms + pax occupied on date d."""
+            if d == today:
+                # Live rack flag — WebHMS source of truth for "now"
+                cur.execute("""
+                    SELECT COUNT(*) AS rooms,
+                           ISNULL(SUM(ISNULL(RmPax, 1)), 0) AS pax
+                    FROM Rooms WHERE RmAvl = 0
+                """)
+                row = cur.fetchone() or {}
+                return int(row.get('rooms') or 0), int(row.get('pax') or 0)
+            # Past date: distinct rooms from FRSVDet whose stay covers d
             cur.execute("""
-                SELECT COUNT(DISTINCT BillRmNo) AS rooms
-                FROM Bills
-                WHERE BillCode = 'RC'
-                  AND (BillVoid IS NULL OR BillVoid = 0)
-                  AND BillRmNo IS NOT NULL AND BillRmNo <> ''
-                  AND CAST(BillRmArrDate AS DATE) <= %s
-                  AND CAST(BillRmDepDate AS DATE) >  %s
+                SELECT COUNT(DISTINCT d.RsvRmId) AS rooms
+                FROM FRSVDet d
+                WHERE d.RsvDetStat != 'X'
+                  AND d.RsvRmId IS NOT NULL
+                  AND CAST(d.RsvDetArrDt AS DATE) <= %s
+                  AND CAST(d.RsvDetDepDt AS DATE) >  %s
             """, (d, d))
             rooms = int((cur.fetchone() or {}).get('rooms') or 0)
-            # Pax via FRSVDet (Bills doesn't carry pax directly)
             cur.execute("""
                 SELECT ISNULL(SUM(ISNULL(RsvDetPax, 1)), 0) AS pax
                 FROM FRSVDet
@@ -1951,23 +1959,22 @@ def v2_occupancy():
             cur.execute("""
                 SELECT ISNULL(SUM(
                     DATEDIFF(DAY,
-                        CASE WHEN CAST(BillRmArrDate AS DATE) > %s
-                             THEN CAST(BillRmArrDate AS DATE) ELSE %s END,
-                        CASE WHEN CAST(BillRmDepDate AS DATE) <= %s
-                             THEN CAST(BillRmDepDate AS DATE)
+                        CASE WHEN CAST(RsvDetArrDt AS DATE) > %s
+                             THEN CAST(RsvDetArrDt AS DATE) ELSE %s END,
+                        CASE WHEN CAST(RsvDetDepDt AS DATE) <= %s
+                             THEN CAST(RsvDetDepDt AS DATE)
                              ELSE DATEADD(DAY, 1, %s) END
                     )
                 ), 0) AS rn
                 FROM (
-                    SELECT DISTINCT BillRmNo, BillRmArrDate, BillRmDepDate
-                    FROM Bills
-                    WHERE BillCode = 'RC'
-                      AND (BillVoid IS NULL OR BillVoid = 0)
-                      AND BillRmNo IS NOT NULL AND BillRmNo <> ''
-                      AND BillRmArrDate IS NOT NULL AND BillRmDepDate IS NOT NULL
+                    SELECT DISTINCT RsvRmId, RsvDetArrDt, RsvDetDepDt
+                    FROM FRSVDet
+                    WHERE RsvDetStat != 'X'
+                      AND RsvRmId IS NOT NULL
+                      AND RsvDetArrDt IS NOT NULL AND RsvDetDepDt IS NOT NULL
                 ) stays
-                WHERE CAST(BillRmArrDate AS DATE) <= %s
-                  AND CAST(BillRmDepDate AS DATE) >  %s
+                WHERE CAST(RsvDetArrDt AS DATE) <= %s
+                  AND CAST(RsvDetDepDt AS DATE) >  %s
             """, (start_dt, start_dt, selected, selected, selected, start_dt))
             occupied_rn   = int((cur.fetchone() or {}).get('rn') or 0)
             expected_days = (selected - start_dt).days + 1
