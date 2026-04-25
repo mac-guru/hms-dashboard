@@ -37,12 +37,12 @@ $trigger = New-ScheduledTaskTrigger `
     -RepetitionDuration  ([TimeSpan]::MaxValue)
 
 $settings = New-ScheduledTaskSettingsSet `
-    -ExecutionTimeLimit    (New-TimeSpan -Minutes 3) `
-    -RestartCount          3 `
-    -RestartInterval       (New-TimeSpan -Minutes 1) `
-    -MultipleInstances     IgnoreNew `
-    -StartWhenAvailable    $true `
-    -RunOnlyIfNetworkAvailable $true
+    -ExecutionTimeLimit        (New-TimeSpan -Minutes 3) `
+    -RestartCount              3 `
+    -RestartInterval           (New-TimeSpan -Minutes 1) `
+    -MultipleInstances         IgnoreNew `
+    -StartWhenAvailable `
+    -RunOnlyIfNetworkAvailable
 
 # Register task as SYSTEM (no password needed)
 $principal = New-ScheduledTaskPrincipal `
