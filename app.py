@@ -1881,24 +1881,6 @@ def v2_restaurant_sales():
         return add_cors(jsonify({'error': str(e)})), 500
 
 
-@app.route('/api/v2/_debug_audit', methods=['GET','OPTIONS'])
-@api_key_required
-def v2_debug_audit():
-    """TEMP — return full Audit row for a date to inspect column names/values."""
-    if request.method == 'OPTIONS':
-        return add_cors(jsonify({}))
-    try:
-        d = datetime.strptime(request.args.get('date'), '%Y-%m-%d').date()
-        conn = get_db()
-        cur  = conn.cursor(as_dict=True)
-        cur.execute("SELECT TOP 1 * FROM Audit WHERE CAST(AuditDate AS DATE) = %s", (d,))
-        row = cur.fetchone() or {}
-        conn.close()
-        return add_cors(jsonify({k: str(v) if v is not None else None for k, v in row.items()}))
-    except Exception as e:
-        return add_cors(jsonify({'error': str(e)})), 500
-
-
 @app.route('/api/v2/occupancy', methods=['GET','OPTIONS'])
 @api_key_required
 def v2_occupancy():
@@ -1940,17 +1922,20 @@ def v2_occupancy():
                 """)
                 row = cur.fetchone() or {}
                 return int(row.get('rooms') or 0), int(row.get('pax') or 0)
-            # Past date: distinct rooms used at any point during d
-            # (includes morning checkouts — matches WebHMS).
+            # Past date: count of RC folio postings on d — matches the
+            # WebHMS "Detail Audit Report → Total for InHouse" row count.
+            # One folio-room pair = one row (split bills / multi-room
+            # folios count multiple times, as in the printed report).
             cur.execute("""
-                SELECT COUNT(DISTINCT d.RsvRmId) AS rooms
-                FROM FRSVDet d
-                WHERE d.RsvDetStat != 'X'
-                  AND d.RsvRmId IS NOT NULL
-                  AND CAST(d.RsvDetArrDt AS DATE) <= %s
-                  AND CAST(d.RsvDetDepDt AS DATE) >= %s
-            """, (d, d))
+                SELECT COUNT(*) AS rooms
+                FROM Bills
+                WHERE BillCode = 'RC'
+                  AND (BillVoid IS NULL OR BillVoid = 0)
+                  AND CAST(BillDt AS DATE) = %s
+            """, (d,))
             rooms = int((cur.fetchone() or {}).get('rooms') or 0)
+            # Pax via FRSVDet stays covering d (closest available source —
+            # Bills carries no pax column).
             cur.execute("""
                 SELECT ISNULL(SUM(ISNULL(RsvDetPax, 1)), 0) AS pax
                 FROM FRSVDet
@@ -1986,29 +1971,15 @@ def v2_occupancy():
                 start_dt = datetime.strptime(start_str, '%Y-%m-%d').date()
             except Exception:
                 return None
-            # For each unique stay (BillRmNo + arr + dep) where it overlaps the
-            # period, count the overlap nights. SQL Server's DATEDIFF(DAY, a, b)
-            # returns nights between a and b (b exclusive treatment via +1 day).
+            # Sum daily RC folio postings over [start, selected] —
+            # consistent with date_count for past dates (matches WebHMS audit).
             cur.execute("""
-                SELECT ISNULL(SUM(
-                    DATEDIFF(DAY,
-                        CASE WHEN CAST(RsvDetArrDt AS DATE) > %s
-                             THEN CAST(RsvDetArrDt AS DATE) ELSE %s END,
-                        CASE WHEN CAST(RsvDetDepDt AS DATE) <= %s
-                             THEN CAST(RsvDetDepDt AS DATE)
-                             ELSE DATEADD(DAY, 1, %s) END
-                    )
-                ), 0) AS rn
-                FROM (
-                    SELECT DISTINCT RsvRmId, RsvDetArrDt, RsvDetDepDt
-                    FROM FRSVDet
-                    WHERE RsvDetStat != 'X'
-                      AND RsvRmId IS NOT NULL
-                      AND RsvDetArrDt IS NOT NULL AND RsvDetDepDt IS NOT NULL
-                ) stays
-                WHERE CAST(RsvDetArrDt AS DATE) <= %s
-                  AND CAST(RsvDetDepDt AS DATE) >  %s
-            """, (start_dt, start_dt, selected, selected, selected, start_dt))
+                SELECT COUNT(*) AS rn
+                FROM Bills
+                WHERE BillCode = 'RC'
+                  AND (BillVoid IS NULL OR BillVoid = 0)
+                  AND CAST(BillDt AS DATE) BETWEEN %s AND %s
+            """, (start_dt, selected))
             occupied_rn   = int((cur.fetchone() or {}).get('rn') or 0)
             expected_days = (selected - start_dt).days + 1
             total_rn      = total_rooms * expected_days
