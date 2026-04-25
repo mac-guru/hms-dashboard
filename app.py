@@ -1891,7 +1891,7 @@ def v2_occupancy():
       mtd_start  — start of period for the MTD card (e.g. Baishakh 1)
       fy_start   — start of period for the FY card (e.g. Shrawan 1)
 
-    Sums Audit.OccRm_T over each range. Includes missing_days when the audit
+    Sums Audit.Occ_T over each range. Includes missing_days when the audit
     table doesn't have a row for every day in the range.
     """
     if request.method == 'OPTIONS':
@@ -1922,7 +1922,7 @@ def v2_occupancy():
             today_pax   = int(row.get('p') or 0)
         else:
             cur.execute("""
-                SELECT TOP 1 OccRm_T AS r, Pax_T AS p
+                SELECT TOP 1 Occ_T AS r, Pax_T AS p
                 FROM Audit WHERE CAST(AuditDate AS DATE) = %s
             """, (selected,))
             row = cur.fetchone() or {}
@@ -1931,7 +1931,7 @@ def v2_occupancy():
 
         # Yesterday — always from Audit
         cur.execute("""
-            SELECT TOP 1 OccRm_T AS r, Pax_T AS p
+            SELECT TOP 1 Occ_T AS r, Pax_T AS p
             FROM Audit WHERE CAST(AuditDate AS DATE) = %s
         """, (yesterday,))
         row = cur.fetchone() or {}
@@ -1946,7 +1946,7 @@ def v2_occupancy():
             except Exception:
                 return None
             cur.execute("""
-                SELECT COUNT(*) AS days, ISNULL(SUM(ISNULL(OccRm_T, 0)), 0) AS occ
+                SELECT COUNT(*) AS days, ISNULL(SUM(ISNULL(Occ_T, 0)), 0) AS occ
                 FROM Audit
                 WHERE CAST(AuditDate AS DATE) BETWEEN %s AND %s
             """, (start_dt, selected))
@@ -2057,7 +2057,7 @@ def v2_stats():
             WHERE CAST(AuditDate AS DATE) = %s
         """, (yesterday.date(),))
         audit_y = cur.fetchone() or {}
-        yest_rooms = int(fv(audit_y.get('OccRm_T') or audit_y.get('ArrRm_T') or 0))
+        yest_rooms = int(fv(audit_y.get('Occ_T') or audit_y.get('ArrRm_T') or 0))
         yest_pax   = int(fv(audit_y.get('Pax_T', 0)))
 
         conn.close()
