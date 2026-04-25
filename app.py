@@ -1881,6 +1881,108 @@ def v2_restaurant_sales():
         return add_cors(jsonify({'error': str(e)})), 500
 
 
+@app.route('/api/v2/occupancy', methods=['GET','OPTIONS'])
+@api_key_required
+def v2_occupancy():
+    """Occupancy metrics for selected date + yesterday + arbitrary period (MTD, FY).
+
+    Query params (all AD dates, YYYY-MM-DD):
+      date       — selected date (defaults today)
+      mtd_start  — start of period for the MTD card (e.g. Baishakh 1)
+      fy_start   — start of period for the FY card (e.g. Shrawan 1)
+
+    Sums Audit.OccRm_T over each range. Includes missing_days when the audit
+    table doesn't have a row for every day in the range.
+    """
+    if request.method == 'OPTIONS':
+        return add_cors(jsonify({}))
+    try:
+        date_param = request.args.get('date')
+        mtd_start  = request.args.get('mtd_start')
+        fy_start   = request.args.get('fy_start')
+        selected   = (datetime.strptime(date_param, '%Y-%m-%d').date()
+                      if date_param else datetime.now().date())
+        yesterday  = selected - timedelta(days=1)
+
+        conn = get_db()
+        cur  = conn.cursor(as_dict=True)
+
+        # Total rooms (use 27 as fallback to match dashboard expectations)
+        cur.execute("SELECT COUNT(*) AS total FROM Rooms")
+        total_rooms = int((cur.fetchone() or {}).get('total', 0)) or 27
+
+        # Selected date — live rack count if it's today, else Audit
+        if selected == datetime.now().date():
+            cur.execute("""
+                SELECT COUNT(*) AS r, ISNULL(SUM(ISNULL(RmPax, 1)), 0) AS p
+                FROM Rooms WHERE RmAvl = 0
+            """)
+            row = cur.fetchone() or {}
+            today_rooms = int(row.get('r') or 0)
+            today_pax   = int(row.get('p') or 0)
+        else:
+            cur.execute("""
+                SELECT TOP 1 OccRm_T AS r, Pax_T AS p
+                FROM Audit WHERE CAST(AuditDate AS DATE) = %s
+            """, (selected,))
+            row = cur.fetchone() or {}
+            today_rooms = int(row.get('r') or 0)
+            today_pax   = int(row.get('p') or 0)
+
+        # Yesterday — always from Audit
+        cur.execute("""
+            SELECT TOP 1 OccRm_T AS r, Pax_T AS p
+            FROM Audit WHERE CAST(AuditDate AS DATE) = %s
+        """, (yesterday,))
+        row = cur.fetchone() or {}
+        yest_rooms = int(row.get('r') or 0)
+        yest_pax   = int(row.get('p') or 0)
+
+        def period_sum(start_str):
+            if not start_str:
+                return None
+            try:
+                start_dt = datetime.strptime(start_str, '%Y-%m-%d').date()
+            except Exception:
+                return None
+            cur.execute("""
+                SELECT COUNT(*) AS days, ISNULL(SUM(ISNULL(OccRm_T, 0)), 0) AS occ
+                FROM Audit
+                WHERE CAST(AuditDate AS DATE) BETWEEN %s AND %s
+            """, (start_dt, selected))
+            r = cur.fetchone() or {}
+            days_present = int(r.get('days') or 0)
+            occupied_rn  = int(r.get('occ')  or 0)
+            expected_days = (selected - start_dt).days + 1
+            total_rn      = total_rooms * expected_days
+            missing       = max(0, expected_days - days_present)
+            return {
+                'occupied_rn':  occupied_rn,
+                'total_rn':     total_rn,
+                'pct':          round(occupied_rn / total_rn * 100, 1) if total_rn else 0,
+                'missing_days': missing,
+            }
+
+        mtd = period_sum(mtd_start) or {'occupied_rn': 0, 'total_rn': 0, 'pct': 0, 'missing_days': 0}
+        fy  = period_sum(fy_start)  or {'occupied_rn': 0, 'total_rn': 0, 'pct': 0, 'missing_days': 0}
+
+        conn.close()
+
+        def pct(n, d):
+            return round(n / d * 100, 1) if d > 0 else 0
+
+        return add_cors(jsonify({
+            'date':        str(selected),
+            'total_rooms': total_rooms,
+            'today':     {'rooms': today_rooms, 'pax': today_pax, 'pct': pct(today_rooms, total_rooms)},
+            'yesterday': {'rooms': yest_rooms,  'pax': yest_pax,  'pct': pct(yest_rooms,  total_rooms)},
+            'mtd':       mtd,
+            'fy':        fy,
+        }))
+    except Exception as e:
+        return add_cors(jsonify({'error': str(e)})), 500
+
+
 @app.route('/api/v2/stats', methods=['GET','OPTIONS'])
 @api_key_required
 def v2_stats():
