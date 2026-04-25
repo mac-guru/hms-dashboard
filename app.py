@@ -1935,28 +1935,20 @@ def v2_stats():
         # go stale, while the rack flag stays = 0 as long as they're physically
         # in the room.
         cur.execute("""
-            SELECT COUNT(DISTINCT r.RmId) AS rooms
-            FROM Rooms r
-            INNER JOIN FRSVDet d
-                    ON d.RsvRmId       = r.RmId
-                   AND d.RsvDetCheckIn = 1
-                   AND d.RsvDetStat    = 'open'
-            WHERE r.RmAvl = 0
-        """)
-        inhouse_rooms = int((cur.fetchone() or {}).get('rooms', 0))
-
-        cur.execute("""
-            SELECT ISNULL(SUM(ISNULL(r.RmPax, 1)), 0) AS pax
+            SELECT
+                COUNT(*)                           AS rooms,
+                ISNULL(SUM(ISNULL(r.RmPax, 1)), 0) AS pax
             FROM Rooms r
             WHERE r.RmAvl = 0
               AND EXISTS (
                 SELECT 1 FROM FRSVDet d
                 WHERE d.RsvRmId       = r.RmId
                   AND d.RsvDetCheckIn = 1
-                  AND d.RsvDetStat    = 'open'
               )
         """)
-        inhouse_pax = int((cur.fetchone() or {}).get('pax', 0))
+        ih = cur.fetchone() or {}
+        inhouse_rooms = int(ih.get('rooms', 0))
+        inhouse_pax   = int(ih.get('pax', 0))
 
         # Yesterday occupancy + pax from night-audit Audit table
         yesterday = selected - timedelta(days=1)
