@@ -1945,6 +1945,20 @@ def v2_occupancy():
         today_rooms, today_pax = date_count(selected)
         yest_rooms,  yest_pax  = date_count(yesterday)
 
+        def checkouts_on(d):
+            """Rooms that checked out on date d (FRSVDet dep_date = d, not cancelled)."""
+            cur.execute("""
+                SELECT COUNT(DISTINCT RsvRmId) AS n
+                FROM FRSVDet
+                WHERE RsvDetStat != 'X'
+                  AND RsvRmId IS NOT NULL
+                  AND CAST(RsvDetDepDt AS DATE) = %s
+            """, (d,))
+            return int((cur.fetchone() or {}).get('n') or 0)
+
+        today_checkouts = checkouts_on(selected)
+        yest_checkouts  = checkouts_on(yesterday)
+
         def period_room_nights(start_str):
             """Sum of room-nights over [start, selected] from Bills RC stays."""
             if not start_str:
@@ -1997,8 +2011,8 @@ def v2_occupancy():
         return add_cors(jsonify({
             'date':        str(selected),
             'total_rooms': total_rooms,
-            'today':     {'rooms': today_rooms, 'pax': today_pax, 'pct': pct(today_rooms, total_rooms)},
-            'yesterday': {'rooms': yest_rooms,  'pax': yest_pax,  'pct': pct(yest_rooms,  total_rooms)},
+            'today':     {'rooms': today_rooms, 'pax': today_pax, 'pct': pct(today_rooms, total_rooms), 'checkouts': today_checkouts},
+            'yesterday': {'rooms': yest_rooms,  'pax': yest_pax,  'pct': pct(yest_rooms,  total_rooms), 'checkouts': yest_checkouts},
             'mtd':       mtd,
             'fy':        fy,
         }))
