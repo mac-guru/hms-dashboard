@@ -1934,17 +1934,15 @@ def v2_stats():
         # filter excluded guests who extended their stay — FRSVDet dep dates
         # go stale, while the rack flag stays = 0 as long as they're physically
         # in the room.
+        # Use the rack flag directly — Rooms.RmAvl=0 is WebHMS's source of truth
+        # for "occupied right now". Avoids FRSVDet/Guests staleness when guests
+        # are moved or extend their stays.
         cur.execute("""
             SELECT
-                COUNT(*)                           AS rooms,
-                ISNULL(SUM(ISNULL(r.RmPax, 1)), 0) AS pax
-            FROM Rooms r
-            WHERE r.RmAvl = 0
-              AND EXISTS (
-                SELECT 1 FROM FRSVDet d
-                WHERE d.RsvRmId       = r.RmId
-                  AND d.RsvDetCheckIn = 1
-              )
+                COUNT(*)                         AS rooms,
+                ISNULL(SUM(ISNULL(RmPax, 1)), 0) AS pax
+            FROM Rooms
+            WHERE RmAvl = 0
         """)
         ih = cur.fetchone() or {}
         inhouse_rooms = int(ih.get('rooms', 0))
