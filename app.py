@@ -1881,6 +1881,24 @@ def v2_restaurant_sales():
         return add_cors(jsonify({'error': str(e)})), 500
 
 
+@app.route('/api/v2/_debug_audit', methods=['GET','OPTIONS'])
+@api_key_required
+def v2_debug_audit():
+    """TEMP — return full Audit row for a date to inspect column names/values."""
+    if request.method == 'OPTIONS':
+        return add_cors(jsonify({}))
+    try:
+        d = datetime.strptime(request.args.get('date'), '%Y-%m-%d').date()
+        conn = get_db()
+        cur  = conn.cursor(as_dict=True)
+        cur.execute("SELECT TOP 1 * FROM Audit WHERE CAST(AuditDate AS DATE) = %s", (d,))
+        row = cur.fetchone() or {}
+        conn.close()
+        return add_cors(jsonify({k: str(v) if v is not None else None for k, v in row.items()}))
+    except Exception as e:
+        return add_cors(jsonify({'error': str(e)})), 500
+
+
 @app.route('/api/v2/occupancy', methods=['GET','OPTIONS'])
 @api_key_required
 def v2_occupancy():
