@@ -1902,7 +1902,6 @@ def v2_occupancy():
         selected   = (datetime.strptime(date_param, '%Y-%m-%d').date()
                       if date_param else datetime.now().date())
         yesterday  = selected - timedelta(days=1)
-        today      = datetime.now().date()
 
         conn = get_db()
         cur  = conn.cursor(as_dict=True)
@@ -1912,20 +1911,10 @@ def v2_occupancy():
         total_rooms = int((cur.fetchone() or {}).get('total', 0)) or 27
 
         def date_count(d):
-            """Rooms + pax occupied on date d."""
-            if d == today:
-                # Live rack flag — WebHMS source of truth for "now"
-                cur.execute("""
-                    SELECT COUNT(*) AS rooms,
-                           ISNULL(SUM(ISNULL(RmPax, 1)), 0) AS pax
-                    FROM Rooms WHERE RmAvl = 0
-                """)
-                row = cur.fetchone() or {}
-                return int(row.get('rooms') or 0), int(row.get('pax') or 0)
-            # Past date: count of RC folio postings on d — matches the
-            # WebHMS "Detail Audit Report → Total for InHouse" row count.
-            # One folio-room pair = one row (split bills / multi-room
-            # folios count multiple times, as in the printed report).
+            """Rooms + pax on date d — matches WebHMS Detail Audit Report
+            'Total for InHouse' row (count of RC bill postings on the date).
+            Used for today and past dates alike, so dashboard always agrees
+            with the printed audit report on dashboard.himalayansuite.com."""
             cur.execute("""
                 SELECT COUNT(*) AS rooms
                 FROM Bills
@@ -1934,8 +1923,7 @@ def v2_occupancy():
                   AND CAST(BillDt AS DATE) = %s
             """, (d,))
             rooms = int((cur.fetchone() or {}).get('rooms') or 0)
-            # Pax via FRSVDet stays covering d (closest available source —
-            # Bills carries no pax column).
+            # Pax via FRSVDet stays covering d (Bills carries no pax column).
             cur.execute("""
                 SELECT ISNULL(SUM(ISNULL(RsvDetPax, 1)), 0) AS pax
                 FROM FRSVDet
