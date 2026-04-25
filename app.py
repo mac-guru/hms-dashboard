@@ -1935,10 +1935,10 @@ def v2_stats():
         # go stale, while the rack flag stays = 0 as long as they're physically
         # in the room.
         cur.execute("""
-            SELECT COUNT(DISTINCT r.RmNo) AS rooms
+            SELECT COUNT(DISTINCT r.RmId) AS rooms
             FROM Rooms r
             INNER JOIN FRSVDet d
-                    ON d.RsvDetRmCode = r.RmNo
+                    ON d.RsvRmId       = r.RmId
                    AND d.RsvDetCheckIn = 1
                    AND d.RsvDetStat    = 'open'
             WHERE r.RmAvl = 0
@@ -1951,7 +1951,7 @@ def v2_stats():
             WHERE r.RmAvl = 0
               AND EXISTS (
                 SELECT 1 FROM FRSVDet d
-                WHERE d.RsvDetRmCode = r.RmNo
+                WHERE d.RsvRmId       = r.RmId
                   AND d.RsvDetCheckIn = 1
                   AND d.RsvDetStat    = 'open'
               )
