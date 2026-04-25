@@ -1,7 +1,9 @@
 # ══════════════════════════════════════════════════════════════════
 #  HMS Dashboard — One-Time Task Scheduler Setup
 #  Run this ONCE on the Windows server (as Administrator).
-#  After this, every git push to main auto-deploys within 5 minutes.
+#  After this, every git push to main auto-deploys within 1 minute.
+#  For instant deploy (<10 sec), also set up the GitHub webhook —
+#  see README or ask Amrit.
 # ══════════════════════════════════════════════════════════════════
 
 $taskName   = "HMS-AutoDeploy"
@@ -34,11 +36,11 @@ $action = New-ScheduledTaskAction `
     -Argument "-WindowStyle Hidden -ExecutionPolicy Bypass -NonInteractive -File `"$scriptPath`"" `
     -WorkingDirectory $workDir
 
-# Runs every 5 minutes, indefinitely
+# Runs every 1 minute, indefinitely
 $trigger = New-ScheduledTaskTrigger `
     -Once `
     -At (Get-Date) `
-    -RepetitionInterval  (New-TimeSpan -Minutes 5) `
+    -RepetitionInterval  (New-TimeSpan -Minutes 1) `
     -RepetitionDuration  ([TimeSpan]::MaxValue)
 
 $settings = New-ScheduledTaskSettingsSet `
@@ -79,7 +81,7 @@ if ($task) {
     Write-Host ""
     Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Green
     Write-Host "  Done! Auto-deploy is now active." -ForegroundColor Green
-    Write-Host "  Every git push to main deploys in ≤5 min." -ForegroundColor Green
+    Write-Host "  Every git push to main deploys in ≤1 min." -ForegroundColor Green
     Write-Host "  Logs → C:\hms-dashboard\deploy.log" -ForegroundColor Green
     Write-Host "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" -ForegroundColor Green
 } else {

@@ -1,6 +1,6 @@
 from flask import Flask, jsonify, render_template, request, session, redirect, url_for, Response
 from functools import wraps
-import pymssql, requests, re, json, os
+import pymssql, requests, re, json, os, hmac, hashlib, subprocess, threading
 from datetime import datetime, timedelta
 from nepali_datetime import date as NepaliDate
 
@@ -2119,6 +2119,58 @@ def v2_room_types():
         } for r in rows]))
     except Exception as e:
         return add_cors(jsonify({'error': str(e)})), 500
+
+
+# ── GitHub Webhook — instant deploy on push ───────────────────────
+# Set WEBHOOK_SECRET env var to the same secret you enter in GitHub.
+# GitHub → repo Settings → Webhooks → Payload URL:
+#   https://dashboard.himalayansuite.com/deploy
+# Content type: application/json  |  Secret: <your secret>
+# Events: Just the push event
+
+WEBHOOK_SECRET = os.environ.get('WEBHOOK_SECRET', '')
+
+def _run_deploy():
+    """Spawns auto_deploy.ps1 in background; won't block the request."""
+    try:
+        script = r'C:\hms-dashboard\auto_deploy.ps1'
+        subprocess.Popen(
+            ['powershell.exe', '-WindowStyle', 'Hidden',
+             '-ExecutionPolicy', 'Bypass', '-File', script],
+            creationflags=subprocess.CREATE_NO_WINDOW
+        )
+    except Exception as e:
+        print(f'[webhook] deploy spawn error: {e}')
+
+@app.route('/deploy', methods=['POST', 'OPTIONS'])
+def webhook_deploy():
+    if request.method == 'OPTIONS':
+        return add_cors(jsonify({}))
+
+    # Verify GitHub signature if secret is configured
+    if WEBHOOK_SECRET:
+        sig_header = request.headers.get('X-Hub-Signature-256', '')
+        expected   = 'sha256=' + hmac.new(
+            WEBHOOK_SECRET.encode(), request.data, hashlib.sha256
+        ).hexdigest()
+
+        if not hmac.compare_digest(sig_header, expected):
+            return add_cors(jsonify({'error': 'invalid signature'})), 403
+
+    payload = request.get_json(silent=True) or {}
+
+    # Only react to pushes on main branch
+    ref = payload.get('ref', '')
+    if ref and ref != 'refs/heads/main':
+        return add_cors(jsonify({'status': 'ignored', 'ref': ref}))
+
+    # Fire deploy in a daemon thread so response returns immediately
+    t = threading.Thread(target=_run_deploy, daemon=True)
+    t.start()
+
+    sha = (payload.get('after') or 'unknown')[:7]
+    print(f'[webhook] deploy triggered — commit {sha}')
+    return add_cors(jsonify({'status': 'deploying', 'commit': sha}))
 
 
 if __name__ == "__main__":
