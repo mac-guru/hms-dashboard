@@ -1927,7 +1927,7 @@ def v2_stats():
         rev = cur.fetchone() or {}
 
         # Real in-house rooms + pax from checked-in reservations
-        # dep >= today includes guests departing today but not yet checked out
+        # dep > today excludes guests departing today (already checked out)
         cur.execute("""
             SELECT
                 COUNT(*)                             AS rooms,
@@ -1936,7 +1936,7 @@ def v2_stats():
             WHERE RsvDetCheckIn = 1
               AND RsvDetStat     = 'open'
               AND CAST(RsvDetArrDt AS DATE) <= %s
-              AND CAST(RsvDetDepDt AS DATE) >= %s
+              AND CAST(RsvDetDepDt AS DATE) >  %s
         """, (selected.date(), selected.date()))
         ih = cur.fetchone() or {}
         inhouse_rooms = int(ih.get('rooms', 0))
