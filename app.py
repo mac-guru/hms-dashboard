@@ -2017,6 +2017,142 @@ def v2_occupancy():
         return add_cors(jsonify({'error': str(e)})), 500
 
 
+# ─── WhatsApp daily report (Twilio) ──────────────────────────────
+def _build_yesterday_summary():
+    """Compose a WhatsApp-friendly text summary of yesterday's KPIs."""
+    yesterday = datetime.now().date() - timedelta(days=1)
+    bs        = NepaliDate.from_datetime_date(yesterday)
+    bs_str    = f"{bs.year}/{str(bs.month).zfill(2)}/{str(bs.day).zfill(2)}"
+
+    conn = get_db()
+    cur  = conn.cursor(as_dict=True)
+
+    # Total rooms
+    cur.execute("SELECT COUNT(*) AS total FROM Rooms")
+    total_rooms = int((cur.fetchone() or {}).get('total', 0)) or 27
+
+    # Occupancy: RC folio postings on yesterday (matches audit report)
+    cur.execute("""
+        SELECT COUNT(*) AS rooms FROM Bills
+        WHERE BillCode='RC' AND (BillVoid IS NULL OR BillVoid = 0)
+          AND CAST(BillDt AS DATE) = %s
+    """, (yesterday,))
+    rooms = int((cur.fetchone() or {}).get('rooms') or 0)
+
+    # Pax + checkouts via FRSVDet
+    cur.execute("""
+        SELECT ISNULL(SUM(ISNULL(RsvDetPax, 1)), 0) AS pax
+        FROM FRSVDet WHERE RsvDetStat != 'X'
+          AND CAST(RsvDetArrDt AS DATE) <= %s AND CAST(RsvDetDepDt AS DATE) >= %s
+    """, (yesterday, yesterday))
+    pax = int((cur.fetchone() or {}).get('pax') or 0)
+    cur.execute("""
+        SELECT COUNT(DISTINCT RsvRmId) AS n FROM FRSVDet
+        WHERE RsvDetStat != 'X' AND RsvRmId IS NOT NULL
+          AND CAST(RsvDetDepDt AS DATE) = %s
+    """, (yesterday,))
+    checkouts = int((cur.fetchone() or {}).get('n') or 0)
+
+    # Revenue (matches /api/v2/overview/revenue)
+    cur.execute("""
+        SELECT
+            ISNULL(SUM(CASE WHEN BillCurr='NRS' OR BillCurr IS NULL
+                           THEN ISNULL(BillRC,0)+ISNULL(BillPlanAmt,0)
+                           ELSE (ISNULL(BillRC,0)+ISNULL(BillPlanAmt,0))*ISNULL(BillFxRate,1) END), 0) AS room_rev
+        FROM Bills WHERE BillCode='RC' AND (BillVoid IS NULL OR BillVoid=0)
+          AND CAST(BillDt AS DATE) = %s
+    """, (yesterday,))
+    room_rev = float((cur.fetchone() or {}).get('room_rev') or 0)
+    cur.execute("""
+        SELECT ISNULL(SUM(ISNULL(BillTot,0)*ISNULL(BillFxRate,1)), 0) AS spa_rev
+        FROM Bills WHERE BillCode='SPA' AND (BillVoid IS NULL OR BillVoid=0)
+          AND CAST(BillDt AS DATE) = %s
+    """, (yesterday,))
+    spa_rev = float((cur.fetchone() or {}).get('spa_rev') or 0)
+    cur.execute("""
+        SELECT ISNULL(SUM(ISNULL(BillTot,0)*ISNULL(BillFxRate,1)), 0) AS res_rev
+        FROM Bills WHERE BillCode IN ('RES','BAR') AND (BillVoid IS NULL OR BillVoid=0)
+          AND CAST(BillDt AS DATE) = %s
+    """, (yesterday,))
+    res_rev = float((cur.fetchone() or {}).get('res_rev') or 0)
+    total_rev = room_rev + spa_rev + res_rev
+
+    # Cash received
+    cur.execute("""
+        SELECT ISNULL(SUM(ISNULL(BillTot, 0)), 0) AS cash FROM Bills
+        WHERE BillPmode = 1 AND (BillVoid IS NULL OR BillVoid = 0)
+          AND CAST(BillDt AS DATE) = %s
+    """, (yesterday,))
+    cash = float((cur.fetchone() or {}).get('cash') or 0)
+
+    conn.close()
+
+    pct = round(rooms / total_rooms * 100, 1) if total_rooms else 0
+    fmt = lambda n: f"{round(n):,}"
+
+    return (
+        "🌅 *Himalayan Suite — Daily Report*\n"
+        f"📅 Yesterday: {yesterday.strftime('%d %b %Y')} (BS {bs_str})\n\n"
+        f"🛏  Occupancy: *{pct}%*  ·  {rooms} of {total_rooms} rooms\n"
+        f"👥  Pax: {pax}\n"
+        f"🚪  Checkouts: {checkouts}\n\n"
+        f"💰  Revenue: *NPR {fmt(total_rev)}*\n"
+        f"     • Room  NPR {fmt(room_rev)}\n"
+        f"     • Spa   NPR {fmt(spa_rev)}\n"
+        f"     • F&B   NPR {fmt(res_rev)}\n\n"
+        f"💵  Cash Received: *NPR {fmt(cash)}*"
+    )
+
+
+@app.route('/api/v2/whatsapp/send-yesterday', methods=['POST','OPTIONS'])
+@api_key_required
+def v2_whatsapp_send_yesterday():
+    """Send yesterday's KPI summary to all configured WhatsApp recipients
+    via Twilio. Triggered by Windows Task Scheduler at 05:00 Nepal time."""
+    if request.method == 'OPTIONS':
+        return add_cors(jsonify({}))
+    try:
+        sid    = os.environ.get('TWILIO_ACCOUNT_SID')
+        token  = os.environ.get('TWILIO_AUTH_TOKEN')
+        wa_from = os.environ.get('TWILIO_WHATSAPP_FROM')  # e.g. whatsapp:+14155238886
+        recips  = os.environ.get('WHATSAPP_RECIPIENTS', '')  # comma-separated +977…
+        if not (sid and token and wa_from and recips):
+            return jsonify({'error': 'Missing Twilio env vars'}), 500
+
+        body = _build_yesterday_summary()
+        url  = f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json"
+        results = []
+        for raw in [r.strip() for r in recips.split(',') if r.strip()]:
+            to = raw if raw.startswith('whatsapp:') else f"whatsapp:{raw}"
+            r  = requests.post(
+                url,
+                auth=(sid, token),
+                data={'From': wa_from, 'To': to, 'Body': body},
+                timeout=20,
+            )
+            results.append({
+                'to': to,
+                'status': r.status_code,
+                'sid': r.json().get('sid') if r.ok else None,
+                'error': None if r.ok else r.json().get('message', r.text[:200]),
+            })
+        return add_cors(jsonify({'sent': len(results), 'results': results, 'preview': body}))
+    except Exception as e:
+        return add_cors(jsonify({'error': str(e)})), 500
+
+
+@app.route('/api/v2/whatsapp/preview-yesterday', methods=['GET','OPTIONS'])
+@api_key_required
+def v2_whatsapp_preview_yesterday():
+    """Render the message body without sending — handy for testing."""
+    if request.method == 'OPTIONS':
+        return add_cors(jsonify({}))
+    try:
+        return add_cors(jsonify({'preview': _build_yesterday_summary()}))
+    except Exception as e:
+        return add_cors(jsonify({'error': str(e)})), 500
+
+
 @app.route('/api/v2/stats', methods=['GET','OPTIONS'])
 @api_key_required
 def v2_stats():
