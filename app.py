@@ -2150,9 +2150,11 @@ def v2_debug_cash_accounts():
     try:
         conn = get_db()
         cur  = conn.cursor(as_dict=True)
-        # 1. Accounts whose name contains CASH
+        # 1. Accounts whose name contains CASH (with opening balance)
         cur.execute("""
-            SELECT GL_CODE, GL_NAME, MAST_GL_CODE, GL_TYPE
+            SELECT GL_CODE, GL_NAME, MAST_GL_CODE, GL_TYPE,
+                   ISNULL(OP_LC_BAL, 0) AS op_bal,
+                   ISNULL(DR_CR, '') AS op_dr_cr
             FROM AC_CHART
             WHERE UPPER(GL_NAME) LIKE '%CASH%'
             ORDER BY GL_CODE
@@ -2177,15 +2179,23 @@ def v2_debug_cash_accounts():
                 FROM GLTRAN_DETL WHERE GL_CODE = %s
             """, (acc['GL_CODE'],))
             t = cur.fetchone() or {}
+            op_bal   = float(acc.get('op_bal') or 0)
+            op_dr_cr = (acc.get('op_dr_cr') or '').strip().upper()
+            op_signed = op_bal if op_dr_cr == 'DR' else -op_bal if op_dr_cr == 'CR' else op_bal
+            dr_total = float(t.get('dr') or 0)
+            cr_total = float(t.get('cr') or 0)
             balances.append({
-                'code':    (acc.get('GL_CODE') or '').strip(),
-                'name':    (acc.get('GL_NAME') or '').strip(),
-                'parent':  (acc.get('MAST_GL_CODE') or '').strip(),
-                'type':    (acc.get('GL_TYPE') or '').strip(),
-                'dr':      float(t.get('dr') or 0),
-                'cr':      float(t.get('cr') or 0),
-                'balance': round(float(t.get('dr') or 0) - float(t.get('cr') or 0), 2),
-                'lines':   int(t.get('n') or 0),
+                'code':       (acc.get('GL_CODE') or '').strip(),
+                'name':       (acc.get('GL_NAME') or '').strip(),
+                'parent':     (acc.get('MAST_GL_CODE') or '').strip(),
+                'type':       (acc.get('GL_TYPE') or '').strip(),
+                'op_bal':     op_bal,
+                'op_dr_cr':   op_dr_cr,
+                'dr':         dr_total,
+                'cr':         cr_total,
+                'mvmt':       round(dr_total - cr_total, 2),
+                'balance':    round(op_signed + dr_total - cr_total, 2),
+                'lines':      int(t.get('n') or 0),
             })
         # 4. Also get column list for AC_CHART (look for opening balance fields)
         cur.execute("""
