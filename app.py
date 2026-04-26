@@ -2168,9 +2168,17 @@ def v2_debug_cash_accounts():
             ORDER BY GL_CODE
         """)
         sub_accounts = cur.fetchall() or []
-        # 3. For each cash account, get DR/CR totals
+        # 3. For each cash account, get DR/CR totals — both all-time and
+        # filtered to current Nepal FY (Shrawan 1 = 17 July of previous AD year).
+        # Use the same dual-date logic the P&L endpoint uses.
+        today_d  = datetime.now().date()
+        # FY start: if today >= July 17 of this year, FY started this July 17.
+        # Otherwise it started July 17 of previous AD year.
+        fy_start_y = today_d.year if today_d >= datetime(today_d.year, 7, 17).date() else today_d.year - 1
+        fy_start = datetime(fy_start_y, 7, 17).date()
         balances = []
         for acc in cash_accounts:
+            # All-time
             cur.execute("""
                 SELECT
                     ISNULL(SUM(CASE WHEN GL_DR_CR='DR' THEN ISNULL(GL_LC_AMT,0) ELSE 0 END),0) AS dr,
@@ -2179,23 +2187,51 @@ def v2_debug_cash_accounts():
                 FROM GLTRAN_DETL WHERE GL_CODE = %s
             """, (acc['GL_CODE'],))
             t = cur.fetchone() or {}
+            # FY only (dual date paths)
+            cur.execute("""
+                SELECT
+                    ISNULL(SUM(CASE WHEN gtd.GL_DR_CR='DR' THEN ISNULL(gtd.GL_LC_AMT,0) ELSE 0 END),0) AS dr,
+                    ISNULL(SUM(CASE WHEN gtd.GL_DR_CR='CR' THEN ISNULL(gtd.GL_LC_AMT,0) ELSE 0 END),0) AS cr,
+                    COUNT(*) AS n
+                FROM GLTRAN_DETL gtd
+                WHERE gtd.GL_CODE = %s
+                  AND (
+                      EXISTS (SELECT 1 FROM Transactions tr
+                              WHERE tr.T_DES = gtd.VCH_NO
+                                AND CAST(tr.T_DT AS DATE) >= %s
+                                AND CAST(tr.T_DT AS DATE) <= %s)
+                      OR
+                      EXISTS (SELECT 1 FROM GLTRAN_MAST gtm
+                              WHERE gtm.VCH_NO = gtd.VCH_NO
+                                AND CAST(gtm.VCH_EDATE AS DATE) >= %s
+                                AND CAST(gtm.VCH_EDATE AS DATE) <= %s)
+                  )
+            """, (acc['GL_CODE'], fy_start, today_d, fy_start, today_d))
+            tfy = cur.fetchone() or {}
             op_bal   = float(acc.get('op_bal') or 0)
             op_dr_cr = (acc.get('op_dr_cr') or '').strip().upper()
             op_signed = op_bal if op_dr_cr == 'DR' else -op_bal if op_dr_cr == 'CR' else op_bal
-            dr_total = float(t.get('dr') or 0)
-            cr_total = float(t.get('cr') or 0)
+            dr_all   = float(t.get('dr') or 0)
+            cr_all   = float(t.get('cr') or 0)
+            dr_fy    = float(tfy.get('dr') or 0)
+            cr_fy    = float(tfy.get('cr') or 0)
             balances.append({
-                'code':       (acc.get('GL_CODE') or '').strip(),
-                'name':       (acc.get('GL_NAME') or '').strip(),
-                'parent':     (acc.get('MAST_GL_CODE') or '').strip(),
-                'type':       (acc.get('GL_TYPE') or '').strip(),
-                'op_bal':     op_bal,
-                'op_dr_cr':   op_dr_cr,
-                'dr':         dr_total,
-                'cr':         cr_total,
-                'mvmt':       round(dr_total - cr_total, 2),
-                'balance':    round(op_signed + dr_total - cr_total, 2),
-                'lines':      int(t.get('n') or 0),
+                'code':         (acc.get('GL_CODE') or '').strip(),
+                'name':         (acc.get('GL_NAME') or '').strip(),
+                'parent':       (acc.get('MAST_GL_CODE') or '').strip(),
+                'type':         (acc.get('GL_TYPE') or '').strip(),
+                'op_bal':       op_bal,
+                'op_dr_cr':     op_dr_cr,
+                'all_dr':       dr_all,
+                'all_cr':       cr_all,
+                'all_mvmt':     round(dr_all - cr_all, 2),
+                'fy_dr':        dr_fy,
+                'fy_cr':        cr_fy,
+                'fy_mvmt':      round(dr_fy - cr_fy, 2),
+                'balance_alltime': round(op_signed + dr_all - cr_all, 2),
+                'balance_fy':      round(op_signed + dr_fy - cr_fy, 2),
+                'lines':        int(t.get('n') or 0),
+                'fy_lines':     int(tfy.get('n') or 0),
             })
         # 4. Also get column list for AC_CHART (look for opening balance fields)
         cur.execute("""
@@ -2205,8 +2241,17 @@ def v2_debug_cash_accounts():
         """)
         ac_chart_cols = [r['COLUMN_NAME'] for r in (cur.fetchall() or [])]
         conn.close()
+        # Sum balances for children of 100084 (per-strategy)
+        children = [b for b in balances if b['parent'] == '100084']
         return add_cors(jsonify({
+            'fy_start': str(fy_start),
+            'today':    str(today_d),
             'cash_accounts': balances,
+            'children_of_100084': {
+                'sum_balance_alltime': round(sum(b['balance_alltime'] for b in children), 2),
+                'sum_balance_fy':      round(sum(b['balance_fy']      for b in children), 2),
+                'expected_webhms':     67690.57,
+            },
             'sub_of_100084': [
                 {k: (v.strip() if isinstance(v, str) else v) for k, v in (a or {}).items()}
                 for a in sub_accounts
