@@ -2141,6 +2141,49 @@ def v2_whatsapp_send_yesterday():
         return add_cors(jsonify({'error': str(e)})), 500
 
 
+@app.route('/api/v2/account/balance', methods=['GET','OPTIONS'])
+@api_key_required
+def v2_account_balance():
+    """Running ledger balance for a chart-of-accounts code.
+    Default: 100084 = CASH-IN-HAND. Asset/expense balance = SUM(DR) - SUM(CR)."""
+    if request.method == 'OPTIONS':
+        return add_cors(jsonify({}))
+    try:
+        code = (request.args.get('code') or '100084').strip()
+        conn = get_db()
+        cur  = conn.cursor(as_dict=True)
+        cur.execute("""
+            SELECT
+                ac.GL_CODE,
+                ac.GL_NAME,
+                ac.GL_TYPE,
+                ISNULL(SUM(CASE WHEN gtd.GL_DR_CR='DR' THEN ISNULL(gtd.GL_LC_AMT,0) ELSE 0 END), 0) AS dr_total,
+                ISNULL(SUM(CASE WHEN gtd.GL_DR_CR='CR' THEN ISNULL(gtd.GL_LC_AMT,0) ELSE 0 END), 0) AS cr_total,
+                COUNT(gtd.GL_CODE) AS lines
+            FROM AC_CHART ac
+            LEFT JOIN GLTRAN_DETL gtd ON gtd.GL_CODE = ac.GL_CODE
+            WHERE ac.GL_CODE = %s
+            GROUP BY ac.GL_CODE, ac.GL_NAME, ac.GL_TYPE
+        """, (code,))
+        row = cur.fetchone()
+        conn.close()
+        if not row:
+            return add_cors(jsonify({'error': f'Account {code} not found'})), 404
+        dr = float(row.get('dr_total') or 0)
+        cr = float(row.get('cr_total') or 0)
+        return add_cors(jsonify({
+            'code':     (row.get('GL_CODE') or '').strip(),
+            'name':     (row.get('GL_NAME') or '').strip(),
+            'type':     (row.get('GL_TYPE') or '').strip(),
+            'dr_total': round(dr, 2),
+            'cr_total': round(cr, 2),
+            'balance':  round(dr - cr, 2),
+            'lines':    int(row.get('lines') or 0),
+        }))
+    except Exception as e:
+        return add_cors(jsonify({'error': str(e)})), 500
+
+
 @app.route('/api/v2/whatsapp/preview-yesterday', methods=['GET','OPTIONS'])
 @api_key_required
 def v2_whatsapp_preview_yesterday():
