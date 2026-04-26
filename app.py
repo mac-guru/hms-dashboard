@@ -2141,6 +2141,72 @@ def v2_whatsapp_send_yesterday():
         return add_cors(jsonify({'error': str(e)})), 500
 
 
+@app.route('/api/v2/_debug_cash_accounts', methods=['GET','OPTIONS'])
+@api_key_required
+def v2_debug_cash_accounts():
+    """TEMP — find all cash-related accounts and their balances."""
+    if request.method == 'OPTIONS':
+        return add_cors(jsonify({}))
+    try:
+        conn = get_db()
+        cur  = conn.cursor(as_dict=True)
+        # 1. Accounts whose name contains CASH
+        cur.execute("""
+            SELECT GL_CODE, GL_NAME, MAST_GL_CODE, GL_TYPE
+            FROM AC_CHART
+            WHERE UPPER(GL_NAME) LIKE '%CASH%'
+            ORDER BY GL_CODE
+        """)
+        cash_accounts = cur.fetchall() or []
+        # 2. Sub-accounts of 100084 (parent = 100084)
+        cur.execute("""
+            SELECT GL_CODE, GL_NAME, MAST_GL_CODE, GL_TYPE
+            FROM AC_CHART
+            WHERE MAST_GL_CODE = '100084'
+            ORDER BY GL_CODE
+        """)
+        sub_accounts = cur.fetchall() or []
+        # 3. For each cash account, get DR/CR totals
+        balances = []
+        for acc in cash_accounts:
+            cur.execute("""
+                SELECT
+                    ISNULL(SUM(CASE WHEN GL_DR_CR='DR' THEN ISNULL(GL_LC_AMT,0) ELSE 0 END),0) AS dr,
+                    ISNULL(SUM(CASE WHEN GL_DR_CR='CR' THEN ISNULL(GL_LC_AMT,0) ELSE 0 END),0) AS cr,
+                    COUNT(*) AS n
+                FROM GLTRAN_DETL WHERE GL_CODE = %s
+            """, (acc['GL_CODE'],))
+            t = cur.fetchone() or {}
+            balances.append({
+                'code':    (acc.get('GL_CODE') or '').strip(),
+                'name':    (acc.get('GL_NAME') or '').strip(),
+                'parent':  (acc.get('MAST_GL_CODE') or '').strip(),
+                'type':    (acc.get('GL_TYPE') or '').strip(),
+                'dr':      float(t.get('dr') or 0),
+                'cr':      float(t.get('cr') or 0),
+                'balance': round(float(t.get('dr') or 0) - float(t.get('cr') or 0), 2),
+                'lines':   int(t.get('n') or 0),
+            })
+        # 4. Also get column list for AC_CHART (look for opening balance fields)
+        cur.execute("""
+            SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_NAME = 'AC_CHART'
+            ORDER BY ORDINAL_POSITION
+        """)
+        ac_chart_cols = [r['COLUMN_NAME'] for r in (cur.fetchall() or [])]
+        conn.close()
+        return add_cors(jsonify({
+            'cash_accounts': balances,
+            'sub_of_100084': [
+                {k: (v.strip() if isinstance(v, str) else v) for k, v in (a or {}).items()}
+                for a in sub_accounts
+            ],
+            'ac_chart_columns': ac_chart_cols,
+        }))
+    except Exception as e:
+        return add_cors(jsonify({'error': str(e)})), 500
+
+
 @app.route('/api/v2/account/balance', methods=['GET','OPTIONS'])
 @api_key_required
 def v2_account_balance():
