@@ -1748,6 +1748,62 @@ def v2_spa_sales():
         return add_cors(jsonify({'error': str(e)})), 500
 
 
+@app.route('/api/v2/_debug_buffet_rows', methods=['GET','OPTIONS'])
+@api_key_required
+def v2_debug_buffet_rows():
+    """TEMP: dump sample BUFFET BillItems rows to check qty distribution."""
+    if request.method == 'OPTIONS':
+        return add_cors(jsonify({}))
+    try:
+        date_from = request.args.get('date_from', '2026-04-14')
+        date_to   = request.args.get('date_to',   '2026-04-28')
+        dish      = request.args.get('dish', 'BUFFET SET BREAKFAST')
+        conn = get_db()
+        cur  = conn.cursor(as_dict=True)
+
+        cur.execute("""
+            SELECT bi.BItmQty, bi.BItmPrice, bi.BItmCode, c.CvDt, c.CvFBno,
+                   c.CvPax, COUNT(*) OVER() AS total_rows
+            FROM BillItems bi
+            JOIN Menu   m ON m.MenuId = bi.BItmMenuId
+            JOIN Covers c ON c.CvId   = bi.BItmCvId
+            WHERE CAST(c.CvDt AS DATE) BETWEEN %s AND %s
+              AND m.MenuName = %s
+            ORDER BY c.CvDt DESC
+        """, (date_from, date_to, dish))
+        rows = [dict(r) for r in cur.fetchall()]
+        # Stringify datetimes
+        for r in rows:
+            for k, v in r.items():
+                if hasattr(v, 'isoformat'): r[k] = v.isoformat()
+
+        # Aggregate variants
+        cur.execute("""
+            SELECT
+                COUNT(*) AS row_count,
+                COUNT(DISTINCT bi.BItmCvId) AS distinct_covers,
+                SUM(ISNULL(bi.BItmQty,0)) AS sum_qty,
+                AVG(ISNULL(bi.BItmQty,0)) AS avg_qty,
+                MIN(bi.BItmQty) AS min_qty,
+                MAX(bi.BItmQty) AS max_qty
+            FROM BillItems bi
+            JOIN Menu   m ON m.MenuId = bi.BItmMenuId
+            JOIN Covers c ON c.CvId   = bi.BItmCvId
+            WHERE CAST(c.CvDt AS DATE) BETWEEN %s AND %s
+              AND m.MenuName = %s
+        """, (date_from, date_to, dish))
+        agg = dict(cur.fetchone() or {})
+
+        conn.close()
+        return add_cors(jsonify({
+            'dish': dish,
+            'agg': {k: (float(v) if v is not None else None) for k, v in agg.items()},
+            'sample_rows': rows[:30],
+        }))
+    except Exception as e:
+        return add_cors(jsonify({'error': str(e)})), 500
+
+
 @app.route('/api/v2/_debug_dish_filters', methods=['GET','OPTIONS'])
 @api_key_required
 def v2_debug_dish_filters():
