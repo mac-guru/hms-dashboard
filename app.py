@@ -1821,13 +1821,10 @@ def v2_debug_dish_filters():
 
         variants = [
             ('A_no_filter',          ""),
-            ('B_cv_stat_1',          "AND c.CvStat = 1"),
-            ('C_cv_print_true',      "AND c.CvPrint = 1"),
-            ('D_cv_hit_1',           "AND c.CvHit = 1"),
-            ('E_cv_dup_null',        "AND (c.CvDuplicate IS NULL OR c.CvDuplicate = 0)"),
-            ('F_bitm_stat_1',        "AND bi.BitmStat = 1"),
-            ('G_cv_fbno_notnull',    "AND c.CvFBno IS NOT NULL AND c.CvFBno <> ''"),
-            ('H_cv_stat_1_dup_null', "AND c.CvStat = 1 AND (c.CvDuplicate IS NULL OR c.CvDuplicate = 0)"),
+            ('I_price_gt_0',         "AND bi.BItmPrice > 0"),
+            ('J_amt_gt_0',           "AND ISNULL(bi.BItmAmt,0) > 0"),
+            ('K_isfree_false',       "AND (bi.BItmIsFree IS NULL OR bi.BItmIsFree = 'False')"),
+            ('L_isfree_false_paid',  "AND (bi.BItmIsFree IS NULL OR bi.BItmIsFree = 'False') AND bi.BItmPrice > 0"),
         ]
         for label, extra in variants:
             try:
