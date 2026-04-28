@@ -1748,6 +1748,86 @@ def v2_spa_sales():
         return add_cors(jsonify({'error': str(e)})), 500
 
 
+@app.route('/api/v2/_debug_dish_tables', methods=['GET','OPTIONS'])
+@api_key_required
+def v2_debug_dish_tables():
+    """TEMP: figure out which tables hold dish-level sales data."""
+    if request.method == 'OPTIONS':
+        return add_cors(jsonify({}))
+    try:
+        date_from = request.args.get('date_from', '2026-04-14')
+        date_to   = request.args.get('date_to',   '2026-04-28')
+        conn = get_db()
+        cur  = conn.cursor(as_dict=True)
+        out = {}
+
+        # Total row counts
+        for t in ('BillItems', 'Covers', 'Menu'):
+            try:
+                cur.execute(f"SELECT COUNT(*) AS c FROM [{t}]")
+                out[f'{t}_total'] = (cur.fetchone() or {}).get('c')
+            except Exception as e:
+                out[f'{t}_total'] = f'ERR {e}'
+
+        # BillItems columns
+        try:
+            cur.execute("""
+                SELECT COLUMN_NAME, DATA_TYPE FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_NAME='BillItems' ORDER BY ORDINAL_POSITION
+            """)
+            out['BillItems_cols'] = [r['COLUMN_NAME'] for r in cur.fetchall()]
+        except Exception as e:
+            out['BillItems_cols'] = f'ERR {e}'
+
+        # Covers columns
+        try:
+            cur.execute("""
+                SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_NAME='Covers' ORDER BY ORDINAL_POSITION
+            """)
+            out['Covers_cols'] = [r['COLUMN_NAME'] for r in cur.fetchall()]
+        except Exception as e:
+            out['Covers_cols'] = f'ERR {e}'
+
+        # Sample BillItems row
+        try:
+            cur.execute("SELECT TOP 1 * FROM BillItems ORDER BY 1 DESC")
+            r = cur.fetchone()
+            if r: out['BillItems_sample'] = {k: (str(v) if v is not None else None) for k,v in r.items()}
+        except Exception as e:
+            out['BillItems_sample'] = f'ERR {e}'
+
+        # Try a few date-filter variants
+        variants = [
+            ("orig_join_covers",  "SELECT COUNT(*) AS c FROM BillItems bi JOIN Covers c ON c.CvId=bi.BItmCvId WHERE CAST(c.CvDt AS DATE) BETWEEN %s AND %s"),
+            ("billitems_billdt",  "SELECT COUNT(*) AS c FROM BillItems bi JOIN Bills b ON b.BillId=bi.BItmBillId WHERE CAST(b.BillDt AS DATE) BETWEEN %s AND %s"),
+            ("billitems_only_pos","SELECT COUNT(*) AS c FROM BillItems WHERE BItmPOS IN ('RES','BAR')"),
+        ]
+        for label, sql in variants:
+            try:
+                cur.execute(sql, (date_from, date_to))
+                out[f'cnt_{label}'] = (cur.fetchone() or {}).get('c')
+            except Exception as e:
+                out[f'cnt_{label}'] = f'ERR {e}'
+
+        # Look for similar table names
+        try:
+            cur.execute("""
+                SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES
+                WHERE TABLE_TYPE='BASE TABLE'
+                  AND (TABLE_NAME LIKE '%Item%' OR TABLE_NAME LIKE '%KOT%' OR TABLE_NAME LIKE '%Cover%' OR TABLE_NAME LIKE '%Dish%' OR TABLE_NAME LIKE '%POS%')
+                ORDER BY TABLE_NAME
+            """)
+            out['candidate_tables'] = [r['TABLE_NAME'] for r in cur.fetchall()]
+        except Exception as e:
+            out['candidate_tables'] = f'ERR {e}'
+
+        conn.close()
+        return add_cors(jsonify(out))
+    except Exception as e:
+        return add_cors(jsonify({'error': str(e)})), 500
+
+
 @app.route('/api/v2/restaurant/dish-report', methods=['GET','OPTIONS'])
 @api_key_required
 def v2_restaurant_dish_report():
