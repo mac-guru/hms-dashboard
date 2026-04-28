@@ -2443,6 +2443,63 @@ def v2_stats():
         return add_cors(jsonify({'error': str(e)})), 500
 
 
+@app.route('/api/v2/_debug_cash_receipt', methods=['GET','OPTIONS'])
+@api_key_required
+def v2_debug_cash_receipt():
+    """TEMP: try several Bills filter combos to find the one matching the
+    WebHMS Cash Receipt total. Pass ?date=YYYY-MM-DD."""
+    if request.method == 'OPTIONS':
+        return add_cors(jsonify({}))
+    try:
+        date = request.args.get('date') or datetime.now().strftime('%Y-%m-%d')
+        conn = get_db()
+        cur  = conn.cursor(as_dict=True)
+        results = {}
+
+        def run(label, sql, params):
+            cur.execute(sql, params)
+            row = cur.fetchone() or {}
+            results[label] = {
+                'total': float(row.get('total') or 0),
+                'count': int(row.get('count') or 0),
+            }
+
+        base = """
+            FROM Bills
+            WHERE CAST(BillDt AS DATE) = %s
+              AND (BillVoid IS NULL OR BillVoid = 0)
+        """
+        select = "SELECT ISNULL(SUM(BillTot),0) AS total, COUNT(*) AS count "
+
+        run('1_pmode1_only',         select + base + " AND BillPmode = 1", (date,))
+        run('2_acr_mb_pmode1',       select + base + " AND BillPmode = 1 AND BillCode IN ('ACR','MB')", (date,))
+        run('3_acr_mb_any_pmode',    select + base + " AND BillCode IN ('ACR','MB')", (date,))
+        run('4_acr_mb_nrs',          select + base + " AND BillCode IN ('ACR','MB') AND (BillCurr = 'NRS' OR BillCurr IS NULL)", (date,))
+        run('5_acr_mb_pmode1_nrs',   select + base + " AND BillPmode = 1 AND BillCode IN ('ACR','MB') AND (BillCurr = 'NRS' OR BillCurr IS NULL)", (date,))
+        run('6_pmode1_nrs_only',     select + base + " AND BillPmode = 1 AND (BillCurr = 'NRS' OR BillCurr IS NULL)", (date,))
+
+        # Per-code breakdown for ACR + MB
+        cur.execute("""
+            SELECT BillCode, BillPmode, ISNULL(SUM(BillTot),0) AS total, COUNT(*) AS count
+            FROM Bills
+            WHERE CAST(BillDt AS DATE) = %s
+              AND (BillVoid IS NULL OR BillVoid = 0)
+              AND BillCode IN ('ACR','MB')
+            GROUP BY BillCode, BillPmode
+            ORDER BY BillCode, BillPmode
+        """, (date,))
+        breakdown = [dict(r) for r in cur.fetchall()]
+
+        conn.close()
+        return add_cors(jsonify({
+            'date': date,
+            'variants': results,
+            'acr_mb_breakdown': breakdown,
+        }))
+    except Exception as e:
+        return add_cors(jsonify({'error': str(e)})), 500
+
+
 @app.route('/api/v2/agents/<int:agent_id>/statement', methods=['GET','OPTIONS'])
 @api_key_required
 def v2_agent_statement(agent_id):
