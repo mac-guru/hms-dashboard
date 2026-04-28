@@ -1748,6 +1748,33 @@ def v2_spa_sales():
         return add_cors(jsonify({'error': str(e)})), 500
 
 
+@app.route('/api/v2/_debug_menu_tkntyp', methods=['GET','OPTIONS'])
+@api_key_required
+def v2_debug_menu_tkntyp():
+    """TEMP: distribution of MenuTknTyp values, plus AMERICANO sample."""
+    if request.method == 'OPTIONS':
+        return add_cors(jsonify({}))
+    try:
+        conn = get_db()
+        cur  = conn.cursor(as_dict=True)
+        out = {}
+        cur.execute("""
+            SELECT MenuTknTyp AS v, COUNT(*) AS c
+            FROM Menu GROUP BY MenuTknTyp ORDER BY c DESC
+        """)
+        out['MenuTknTyp_dist'] = [dict(r) for r in cur.fetchall()]
+
+        cur.execute("SELECT TOP 1 MenuId, MenuName, MenuPos, MenuTknTyp FROM Menu WHERE MenuName = 'AMERICANO'")
+        out['americano'] = dict(cur.fetchone() or {})
+
+        cur.execute("SELECT TOP 5 MenuId, MenuName, MenuPos, MenuTknTyp FROM Menu WHERE MenuTknTyp = 'BOT'")
+        out['bot_samples'] = [dict(r) for r in cur.fetchall()]
+        conn.close()
+        return add_cors(jsonify(out))
+    except Exception as e:
+        return add_cors(jsonify({'error': str(e)})), 500
+
+
 @app.route('/api/v2/restaurant/dish-report', methods=['GET','OPTIONS'])
 @api_key_required
 def v2_restaurant_dish_report():
