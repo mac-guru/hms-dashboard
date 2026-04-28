@@ -1748,39 +1748,12 @@ def v2_spa_sales():
         return add_cors(jsonify({'error': str(e)})), 500
 
 
-@app.route('/api/v2/_debug_menu_tkntyp', methods=['GET','OPTIONS'])
-@api_key_required
-def v2_debug_menu_tkntyp():
-    """TEMP: distribution of MenuTknTyp values, plus AMERICANO sample."""
-    if request.method == 'OPTIONS':
-        return add_cors(jsonify({}))
-    try:
-        conn = get_db()
-        cur  = conn.cursor(as_dict=True)
-        out = {}
-        cur.execute("""
-            SELECT MenuTknTyp AS v, COUNT(*) AS c
-            FROM Menu GROUP BY MenuTknTyp ORDER BY c DESC
-        """)
-        out['MenuTknTyp_dist'] = [dict(r) for r in cur.fetchall()]
-
-        cur.execute("SELECT TOP 1 MenuId, MenuName, MenuPos, MenuTknTyp FROM Menu WHERE MenuName = 'AMERICANO'")
-        out['americano'] = dict(cur.fetchone() or {})
-
-        cur.execute("SELECT TOP 5 MenuId, MenuName, MenuPos, MenuTknTyp FROM Menu WHERE MenuTknTyp = 'BOT'")
-        out['bot_samples'] = [dict(r) for r in cur.fetchall()]
-        conn.close()
-        return add_cors(jsonify(out))
-    except Exception as e:
-        return add_cors(jsonify({'error': str(e)})), 500
-
-
 @app.route('/api/v2/restaurant/dish-report', methods=['GET','OPTIONS'])
 @api_key_required
 def v2_restaurant_dish_report():
     """Dish-wise sales report — qty sold and amount per menu item.
-    Uses BItmCode for outlet (RES/BAR) since BItmPOS is null in WebHMS.
-    Computes amount as BItmPrice × BItmQty since BitmTotAmt is often null."""
+    Classifies by Menu.MenuTknTyp: KOT → Food, BOT → Bar, others excluded.
+    Filters out complimentary items (BItmPrice = 0)."""
     if request.method == 'OPTIONS':
         return add_cors(jsonify({}))
     try:
@@ -1789,18 +1762,18 @@ def v2_restaurant_dish_report():
         outlet    = request.args.get('outlet', '')   # RES | BAR | '' = all
 
         if outlet == 'RES':
-            code_filter = "AND bi.BItmCode = 'RES'"
+            tkn_filter = "AND m.MenuTknTyp = 'KOT'"
         elif outlet == 'BAR':
-            code_filter = "AND bi.BItmCode = 'BAR'"
+            tkn_filter = "AND m.MenuTknTyp = 'BOT'"
         else:
-            code_filter = "AND bi.BItmCode IN ('RES','BAR')"
+            tkn_filter = "AND m.MenuTknTyp IN ('KOT','BOT')"
 
         conn = get_db()
         cur  = conn.cursor(as_dict=True)
         cur.execute(f"""
             SELECT
                 m.MenuName                                          AS dish_name,
-                bi.BItmCode                                         AS code,
+                m.MenuTknTyp                                        AS tkn_typ,
                 SUM(ISNULL(bi.BItmQty, 0))                          AS total_qty,
                 AVG(ISNULL(bi.BItmPrice, 0))                        AS avg_price,
                 SUM(ISNULL(bi.BItmPrice, 0) * ISNULL(bi.BItmQty,0)) AS total_amount
@@ -1810,9 +1783,8 @@ def v2_restaurant_dish_report():
             WHERE CAST(c.CvDt AS DATE) >= %s
               AND CAST(c.CvDt AS DATE) <= %s
               AND ISNULL(bi.BItmPrice, 0) > 0
-              AND ISNULL(m.MenuPos, '') <> 'SPA'
-              {code_filter}
-            GROUP BY m.MenuName, bi.BItmCode
+              {tkn_filter}
+            GROUP BY m.MenuName, m.MenuTknTyp
             ORDER BY SUM(ISNULL(bi.BItmQty, 0)) DESC
         """, (date_from, date_to))
         rows = cur.fetchall()
@@ -1822,7 +1794,7 @@ def v2_restaurant_dish_report():
         for row in rows:
             result.append({
                 'dish_name':    (row['dish_name'] or '').strip(),
-                'outlet':       'Restaurant' if row['code'] == 'RES' else 'Bar',
+                'outlet':       'Restaurant' if row['tkn_typ'] == 'KOT' else 'Bar',
                 'total_qty':    round(float(row['total_qty']    or 0), 2),
                 'avg_price':    round(float(row['avg_price']    or 0), 2),
                 'total_amount': round(float(row['total_amount'] or 0), 2),
