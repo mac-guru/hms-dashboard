@@ -1,15 +1,20 @@
 # HMS Dashboard - Auto Deploy
 # Runs every 1 min via Windows Task Scheduler.
-# Checks GitHub for new commits; if changed -> downloads app.py & restarts Flask.
-# Also auto-restarts Flask if it has crashed.
+# Pulls latest app.py from GitHub when commit changes, then restarts
+# the HMSDashboard Windows service (which runs waitress on port 5055).
+# Also auto-restarts the service if it has crashed and kills any
+# stray "python app.py" instances that older versions of this script
+# may have spawned.
 
-$repo    = "mac-guru/hms-dashboard"
-$branch  = "main"
-$workDir = "C:\hms-dashboard"
-$appFile = "$workDir\app.py"
-$shaFile = "$workDir\.last_sha"
-$logFile = "$workDir\deploy.log"
-$maxLog  = 200
+$repo        = "mac-guru/hms-dashboard"
+$branch      = "main"
+$workDir     = "C:\hms-dashboard"
+$appFile     = "$workDir\app.py"
+$shaFile     = "$workDir\.last_sha"
+$logFile     = "$workDir\deploy.log"
+$serviceName = "HMSDashboard"
+$port        = 5055
+$maxLog      = 200
 
 function Log($msg) {
     $ts   = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
@@ -22,27 +27,50 @@ function Log($msg) {
     }
 }
 
-function IsFlaskRunning {
-    $p = Get-Process python* -ErrorAction SilentlyContinue |
-         Where-Object { $_.CommandLine -like "*app.py*" }
-    return ($null -ne $p)
+# ── Health: did the service end up serving on $port? ─────────────
+function IsServingOnPort {
+    $listening = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue
+    return ($null -ne $listening -and ($listening | Where-Object { $_.LocalAddress -eq '0.0.0.0' -or $_.LocalAddress -eq '::' }))
 }
 
-function StartFlask {
-    Start-Process python `
-        -WorkingDirectory $workDir `
-        -ArgumentList "app.py" `
-        -WindowStyle Hidden
-    Start-Sleep -Seconds 3
-    Log "Flask started."
+function IsServiceRunning {
+    $svc = Get-Service -Name $serviceName -ErrorAction SilentlyContinue
+    return ($null -ne $svc -and $svc.Status -eq 'Running')
 }
 
-function StopFlask {
-    Get-Process python* -ErrorAction SilentlyContinue | Stop-Process -Force
-    Start-Sleep -Seconds 2
+# ── Kill orphan "python app.py" instances (NOT waitress). ────────
+function KillStrayDevServers {
+    $strays = Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='pythonw.exe'" -ErrorAction SilentlyContinue |
+              Where-Object {
+                  $_.CommandLine -and
+                  $_.CommandLine -like "*app.py*" -and
+                  $_.CommandLine -notlike "*waitress*"
+              }
+    foreach ($p in $strays) {
+        Log "Killing stray python app.py PID=$($p.ProcessId)"
+        Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function RestartService($reason) {
+    Log "Restarting $serviceName ($reason)"
+    Restart-Service -Name $serviceName -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 5
+    KillStrayDevServers
+}
+
+function StartServiceIfStopped {
+    if (-not (IsServiceRunning)) {
+        Log "$serviceName is not Running; starting"
+        Start-Service -Name $serviceName -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 5
+    }
 }
 
 Log "--- Check started ---"
+
+# Always clean up any lingering dev-server orphans first.
+KillStrayDevServers
 
 # 1. Check GitHub for latest commit SHA
 try {
@@ -53,10 +81,8 @@ try {
     Log "GitHub SHA: $($newSha.Substring(0,7))"
 } catch {
     Log "GitHub check failed: $_"
-    if (-not (IsFlaskRunning)) {
-        Log "Flask not running - restarting (no GitHub response)."
-        StartFlask
-    }
+    StartServiceIfStopped
+    if (-not (IsServingOnPort)) { RestartService "no listener on $port (no GitHub)" }
     exit 0
 }
 
@@ -76,18 +102,16 @@ if ($newSha -ne $lastSha) {
         exit 1
     }
 
-    StopFlask
-    StartFlask
-
+    RestartService "new commit $($newSha.Substring(0,7))"
     Set-Content -Path $shaFile -Value $newSha
     Log "Deploy complete - commit $($newSha.Substring(0,7))"
 
 } else {
-    # 3. No new code - make sure Flask is alive
-    if (-not (IsFlaskRunning)) {
-        Log "Flask crashed - restarting (same code, no new commit)."
-        StartFlask
+    # 3. No new code - make sure the service is alive AND serving on port
+    StartServiceIfStopped
+    if (-not (IsServingOnPort)) {
+        RestartService "no listener on $port"
     } else {
-        Log "No new commit. Flask is running. All OK."
+        Log "No new commit. Service running and listening on $port. All OK."
     }
 }
