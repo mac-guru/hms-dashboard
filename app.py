@@ -1748,131 +1748,6 @@ def v2_spa_sales():
         return add_cors(jsonify({'error': str(e)})), 500
 
 
-@app.route('/api/v2/_debug_buffet_rows', methods=['GET','OPTIONS'])
-@api_key_required
-def v2_debug_buffet_rows():
-    """TEMP: dump sample BUFFET BillItems rows to check qty distribution."""
-    if request.method == 'OPTIONS':
-        return add_cors(jsonify({}))
-    try:
-        date_from = request.args.get('date_from', '2026-04-14')
-        date_to   = request.args.get('date_to',   '2026-04-28')
-        dish      = request.args.get('dish', 'BUFFET SET BREAKFAST')
-        conn = get_db()
-        cur  = conn.cursor(as_dict=True)
-
-        cur.execute("""
-            SELECT bi.BItmQty, bi.BItmPrice, bi.BItmCode, c.CvDt, c.CvFBno,
-                   c.CvPax, COUNT(*) OVER() AS total_rows
-            FROM BillItems bi
-            JOIN Menu   m ON m.MenuId = bi.BItmMenuId
-            JOIN Covers c ON c.CvId   = bi.BItmCvId
-            WHERE CAST(c.CvDt AS DATE) BETWEEN %s AND %s
-              AND m.MenuName = %s
-            ORDER BY c.CvDt DESC
-        """, (date_from, date_to, dish))
-        rows = [dict(r) for r in cur.fetchall()]
-        # Stringify datetimes
-        for r in rows:
-            for k, v in r.items():
-                if hasattr(v, 'isoformat'): r[k] = v.isoformat()
-
-        # Aggregate variants
-        cur.execute("""
-            SELECT
-                COUNT(*) AS row_count,
-                COUNT(DISTINCT bi.BItmCvId) AS distinct_covers,
-                SUM(ISNULL(bi.BItmQty,0)) AS sum_qty,
-                AVG(ISNULL(bi.BItmQty,0)) AS avg_qty,
-                MIN(bi.BItmQty) AS min_qty,
-                MAX(bi.BItmQty) AS max_qty
-            FROM BillItems bi
-            JOIN Menu   m ON m.MenuId = bi.BItmMenuId
-            JOIN Covers c ON c.CvId   = bi.BItmCvId
-            WHERE CAST(c.CvDt AS DATE) BETWEEN %s AND %s
-              AND m.MenuName = %s
-        """, (date_from, date_to, dish))
-        agg = dict(cur.fetchone() or {})
-
-        conn.close()
-        return add_cors(jsonify({
-            'dish': dish,
-            'agg': {k: (float(v) if v is not None else None) for k, v in agg.items()},
-            'sample_rows': rows[:30],
-        }))
-    except Exception as e:
-        return add_cors(jsonify({'error': str(e)})), 500
-
-
-@app.route('/api/v2/_debug_dish_filters', methods=['GET','OPTIONS'])
-@api_key_required
-def v2_debug_dish_filters():
-    """TEMP: try various status/flag filters to match WebHMS report magnitude.
-    Reference: WebHMS shows BUFFET SET BREAKFAST = 33 for 2026-04-14→28."""
-    if request.method == 'OPTIONS':
-        return add_cors(jsonify({}))
-    try:
-        date_from = request.args.get('date_from', '2026-04-14')
-        date_to   = request.args.get('date_to',   '2026-04-28')
-        target    = request.args.get('dish', 'BUFFET SET BREAKFAST')
-        conn = get_db()
-        cur  = conn.cursor(as_dict=True)
-        out = {'target_dish': target}
-
-        variants = [
-            ('A_no_filter',          ""),
-            ('I_price_gt_0',         "AND bi.BItmPrice > 0"),
-            ('J_amt_gt_0',           "AND ISNULL(bi.BItmAmt,0) > 0"),
-            ('K_isfree_false',       "AND (bi.BItmIsFree IS NULL OR bi.BItmIsFree = 'False')"),
-            ('L_isfree_false_paid',  "AND (bi.BItmIsFree IS NULL OR bi.BItmIsFree = 'False') AND bi.BItmPrice > 0"),
-        ]
-        for label, extra in variants:
-            try:
-                cur.execute(f"""
-                    SELECT SUM(ISNULL(bi.BItmQty,0)) AS qty
-                    FROM BillItems bi
-                    JOIN Menu   m ON m.MenuId = bi.BItmMenuId
-                    JOIN Covers c ON c.CvId   = bi.BItmCvId
-                    WHERE CAST(c.CvDt AS DATE) BETWEEN %s AND %s
-                      AND bi.BItmCode IN ('RES','BAR')
-                      AND m.MenuName = %s
-                      {extra}
-                """, (date_from, date_to, target))
-                out[label] = float((cur.fetchone() or {}).get('qty') or 0)
-            except Exception as e:
-                out[label] = f'ERR {e}'
-
-        # Distinct values in the suspect status columns
-        for col in ('CvStat', 'CvPrint', 'CvHit', 'CvDuplicate'):
-            try:
-                cur.execute(f"""
-                    SELECT {col} AS v, COUNT(*) AS c
-                    FROM Covers
-                    WHERE CAST(CvDt AS DATE) BETWEEN %s AND %s
-                    GROUP BY {col} ORDER BY c DESC
-                """, (date_from, date_to))
-                out[f'{col}_distinct'] = [dict(r) for r in cur.fetchall()]
-            except Exception as e:
-                out[f'{col}_distinct'] = f'ERR {e}'
-
-        try:
-            cur.execute("""
-                SELECT BitmStat AS v, COUNT(*) AS c FROM BillItems bi
-                JOIN Covers c ON c.CvId = bi.BItmCvId
-                WHERE CAST(c.CvDt AS DATE) BETWEEN %s AND %s
-                  AND bi.BItmCode IN ('RES','BAR')
-                GROUP BY BitmStat ORDER BY c DESC
-            """, (date_from, date_to))
-            out['BitmStat_distinct'] = [dict(r) for r in cur.fetchall()]
-        except Exception as e:
-            out['BitmStat_distinct'] = f'ERR {e}'
-
-        conn.close()
-        return add_cors(jsonify(out))
-    except Exception as e:
-        return add_cors(jsonify({'error': str(e)})), 500
-
-
 @app.route('/api/v2/restaurant/dish-report', methods=['GET','OPTIONS'])
 @api_key_required
 def v2_restaurant_dish_report():
@@ -1907,6 +1782,7 @@ def v2_restaurant_dish_report():
             JOIN Covers c ON c.CvId   = bi.BItmCvId
             WHERE CAST(c.CvDt AS DATE) >= %s
               AND CAST(c.CvDt AS DATE) <= %s
+              AND ISNULL(bi.BItmPrice, 0) > 0
               {code_filter}
             GROUP BY m.MenuName, bi.BItmCode
             ORDER BY SUM(ISNULL(bi.BItmQty, 0)) DESC
