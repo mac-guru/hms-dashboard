@@ -1748,43 +1748,6 @@ def v2_spa_sales():
         return add_cors(jsonify({'error': str(e)})), 500
 
 
-@app.route('/api/v2/_debug_menu_schema', methods=['GET','OPTIONS'])
-@api_key_required
-def v2_debug_menu_schema():
-    """TEMP: inspect Menu table + check what category BATH PACKAGE belongs to."""
-    if request.method == 'OPTIONS':
-        return add_cors(jsonify({}))
-    try:
-        conn = get_db()
-        cur  = conn.cursor(as_dict=True)
-        out = {}
-        cur.execute("SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME='Menu' ORDER BY ORDINAL_POSITION")
-        out['menu_cols'] = [r['COLUMN_NAME'] for r in cur.fetchall()]
-
-        cur.execute("SELECT TOP 1 * FROM Menu WHERE MenuName LIKE '%BATH%'")
-        r = cur.fetchone()
-        if r:
-            out['bath_sample'] = {k: (str(v) if v is not None else None) for k, v in r.items()}
-
-        cur.execute("SELECT TOP 1 * FROM Menu WHERE MenuName = 'MUFFINE'")
-        r = cur.fetchone()
-        if r:
-            out['muffine_sample'] = {k: (str(v) if v is not None else None) for k, v in r.items()}
-
-        cur.execute("""
-            SELECT DISTINCT bi.BItmCode, COUNT(*) AS c
-            FROM BillItems bi
-            JOIN Menu m ON m.MenuId = bi.BItmMenuId
-            WHERE m.MenuName LIKE '%BATH%' OR m.MenuName LIKE '%PACKAGE%'
-            GROUP BY bi.BItmCode
-        """)
-        out['spa_billcodes'] = [dict(r) for r in cur.fetchall()]
-        conn.close()
-        return add_cors(jsonify(out))
-    except Exception as e:
-        return add_cors(jsonify({'error': str(e)})), 500
-
-
 @app.route('/api/v2/restaurant/dish-report', methods=['GET','OPTIONS'])
 @api_key_required
 def v2_restaurant_dish_report():
@@ -1820,6 +1783,7 @@ def v2_restaurant_dish_report():
             WHERE CAST(c.CvDt AS DATE) >= %s
               AND CAST(c.CvDt AS DATE) <= %s
               AND ISNULL(bi.BItmPrice, 0) > 0
+              AND ISNULL(m.MenuPos, '') <> 'SPA'
               {code_filter}
             GROUP BY m.MenuName, bi.BItmCode
             ORDER BY SUM(ISNULL(bi.BItmQty, 0)) DESC
