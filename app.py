@@ -1748,6 +1748,78 @@ def v2_spa_sales():
         return add_cors(jsonify({'error': str(e)})), 500
 
 
+@app.route('/api/v2/_debug_dish_filters', methods=['GET','OPTIONS'])
+@api_key_required
+def v2_debug_dish_filters():
+    """TEMP: try various status/flag filters to match WebHMS report magnitude.
+    Reference: WebHMS shows BUFFET SET BREAKFAST = 33 for 2026-04-14→28."""
+    if request.method == 'OPTIONS':
+        return add_cors(jsonify({}))
+    try:
+        date_from = request.args.get('date_from', '2026-04-14')
+        date_to   = request.args.get('date_to',   '2026-04-28')
+        target    = request.args.get('dish', 'BUFFET SET BREAKFAST')
+        conn = get_db()
+        cur  = conn.cursor(as_dict=True)
+        out = {'target_dish': target}
+
+        variants = [
+            ('A_no_filter',          ""),
+            ('B_cv_stat_1',          "AND c.CvStat = 1"),
+            ('C_cv_print_true',      "AND c.CvPrint = 1"),
+            ('D_cv_hit_1',           "AND c.CvHit = 1"),
+            ('E_cv_dup_null',        "AND (c.CvDuplicate IS NULL OR c.CvDuplicate = 0)"),
+            ('F_bitm_stat_1',        "AND bi.BitmStat = 1"),
+            ('G_cv_fbno_notnull',    "AND c.CvFBno IS NOT NULL AND c.CvFBno <> ''"),
+            ('H_cv_stat_1_dup_null', "AND c.CvStat = 1 AND (c.CvDuplicate IS NULL OR c.CvDuplicate = 0)"),
+        ]
+        for label, extra in variants:
+            try:
+                cur.execute(f"""
+                    SELECT SUM(ISNULL(bi.BItmQty,0)) AS qty
+                    FROM BillItems bi
+                    JOIN Menu   m ON m.MenuId = bi.BItmMenuId
+                    JOIN Covers c ON c.CvId   = bi.BItmCvId
+                    WHERE CAST(c.CvDt AS DATE) BETWEEN %s AND %s
+                      AND bi.BItmCode IN ('RES','BAR')
+                      AND m.MenuName = %s
+                      {extra}
+                """, (date_from, date_to, target))
+                out[label] = float((cur.fetchone() or {}).get('qty') or 0)
+            except Exception as e:
+                out[label] = f'ERR {e}'
+
+        # Distinct values in the suspect status columns
+        for col in ('CvStat', 'CvPrint', 'CvHit', 'CvDuplicate'):
+            try:
+                cur.execute(f"""
+                    SELECT {col} AS v, COUNT(*) AS c
+                    FROM Covers
+                    WHERE CAST(CvDt AS DATE) BETWEEN %s AND %s
+                    GROUP BY {col} ORDER BY c DESC
+                """, (date_from, date_to))
+                out[f'{col}_distinct'] = [dict(r) for r in cur.fetchall()]
+            except Exception as e:
+                out[f'{col}_distinct'] = f'ERR {e}'
+
+        try:
+            cur.execute("""
+                SELECT BitmStat AS v, COUNT(*) AS c FROM BillItems bi
+                JOIN Covers c ON c.CvId = bi.BItmCvId
+                WHERE CAST(c.CvDt AS DATE) BETWEEN %s AND %s
+                  AND bi.BItmCode IN ('RES','BAR')
+                GROUP BY BitmStat ORDER BY c DESC
+            """, (date_from, date_to))
+            out['BitmStat_distinct'] = [dict(r) for r in cur.fetchall()]
+        except Exception as e:
+            out['BitmStat_distinct'] = f'ERR {e}'
+
+        conn.close()
+        return add_cors(jsonify(out))
+    except Exception as e:
+        return add_cors(jsonify({'error': str(e)})), 500
+
+
 @app.route('/api/v2/restaurant/dish-report', methods=['GET','OPTIONS'])
 @api_key_required
 def v2_restaurant_dish_report():
