@@ -2443,54 +2443,100 @@ def v2_stats():
         return add_cors(jsonify({'error': str(e)})), 500
 
 
-@app.route('/api/v2/_debug_agent_schema', methods=['GET','OPTIONS'])
+@app.route('/api/v2/agents/<int:agent_id>/statement', methods=['GET','OPTIONS'])
 @api_key_required
-def v2_debug_agent_schema():
-    """TEMP: discover WebHMS tables/columns relevant to the agent ledger.
-    Pass ?table=Foo to list columns + a sample row of that table."""
+def v2_agent_statement(agent_id):
+    """Statement of charges and payments for an agent (sundry debtor).
+    Bills posted to this agent in the date range; computes running balance.
+    Charges (RC, RES, BAR, SPA, LAU, MIS, ...) are debits;
+    payments (PMT, RCT, ACR, CR) are credits."""
     if request.method == 'OPTIONS':
         return add_cors(jsonify({}))
     try:
+        date_to_str = request.args.get('date_to') or datetime.now().strftime('%Y-%m-%d')
+        try:
+            date_to_obj = datetime.strptime(date_to_str, '%Y-%m-%d')
+        except ValueError:
+            return add_cors(jsonify({'error': 'invalid date_to'})), 400
+        date_from_str = request.args.get('date_from') or (
+            date_to_obj - timedelta(days=90)
+        ).strftime('%Y-%m-%d')
+        try:
+            datetime.strptime(date_from_str, '%Y-%m-%d')
+        except ValueError:
+            return add_cors(jsonify({'error': 'invalid date_from'})), 400
+
         conn = get_db()
         cur  = conn.cursor(as_dict=True)
+        fv   = lambda v: round(float(v or 0), 2)
 
-        table = request.args.get('table')
-        if table:
-            cur.execute("""
-                SELECT COLUMN_NAME, DATA_TYPE
-                FROM INFORMATION_SCHEMA.COLUMNS
-                WHERE TABLE_NAME = %s
-                ORDER BY ORDINAL_POSITION
-            """, (table,))
-            cols = [dict(r) for r in cur.fetchall()]
-            sample = []
-            if cols:
-                try:
-                    cur.execute(f"SELECT TOP 1 * FROM [{table}]")
-                    row = cur.fetchone()
-                    if row:
-                        sample = [{k: (str(v) if v is not None else None) for k, v in row.items()}]
-                except Exception as e:
-                    sample = [{'_sample_error': str(e)}]
-            conn.close()
-            return add_cors(jsonify({'table': table, 'columns': cols, 'sample': sample}))
-
-        # No table param → list candidate tables
         cur.execute("""
-            SELECT TABLE_NAME
-            FROM INFORMATION_SCHEMA.TABLES
-            WHERE TABLE_TYPE = 'BASE TABLE'
-              AND (TABLE_NAME LIKE 'Agt%'
-                OR TABLE_NAME LIKE 'Agent%'
-                OR TABLE_NAME LIKE '%Tran%'
-                OR TABLE_NAME LIKE '%Ledger%'
-                OR TABLE_NAME LIKE 'AC[_]%'
-                OR TABLE_NAME LIKE 'GL%')
-            ORDER BY TABLE_NAME
-        """)
-        tables = [r['TABLE_NAME'] for r in cur.fetchall()]
+            SELECT AgtId, AgtCode, AgtComp, AgtFDBal, AgtFBBal, AgtCreditLimit
+            FROM Agents WHERE AgtId = %s
+        """, (agent_id,))
+        agent = cur.fetchone()
+        if not agent:
+            conn.close()
+            return add_cors(jsonify({'error': 'agent not found'})), 404
+
+        cur.execute("""
+            SELECT
+                BillNo, BillCode, BillDt,
+                BillDes        AS description,
+                BillGuestName  AS guest_name,
+                BillRmNo       AS room_no,
+                BillTot        AS amount,
+                BillBal        AS balance,
+                BillCleared    AS cleared
+            FROM Bills
+            WHERE BillAgtId = %s
+              AND CAST(BillDt AS DATE) BETWEEN %s AND %s
+              AND (BillVoid IS NULL OR BillVoid = 0)
+            ORDER BY BillDt, BillNo
+        """, (agent_id, date_from_str, date_to_str))
+        rows = cur.fetchall()
+
+        payment_codes = {'PMT', 'RCT', 'ACR', 'CR'}
+        transactions  = []
+        total_debit   = 0.0
+        total_credit  = 0.0
+        running       = 0.0
+        for r in rows:
+            code   = (r['BillCode'] or '').strip().upper()
+            amount = fv(r['amount'])
+            is_pay = code in payment_codes
+            debit  = 0.0 if is_pay else amount
+            credit = amount if is_pay else 0.0
+            total_debit  += debit
+            total_credit += credit
+            running      += debit - credit
+            transactions.append({
+                'date':            r['BillDt'].strftime('%Y-%m-%d') if r['BillDt'] else None,
+                'bill_no':         r['BillNo'],
+                'bill_code':       code,
+                'description':     (r['description'] or '').strip(),
+                'guest_name':      (r['guest_name']  or '').strip(),
+                'room_no':         (r['room_no']     or '').strip(),
+                'debit':           debit,
+                'credit':          credit,
+                'running_balance': round(running, 2),
+                'cleared':         bool(r['cleared'] or 0),
+            })
+
         conn.close()
-        return add_cors(jsonify({'candidate_tables': tables}))
+        return add_cors(jsonify({
+            'agent_id':     agent_id,
+            'code':         agent['AgtCode'] or '',
+            'company':      (agent['AgtComp'] or '').strip(),
+            'fd_balance':   fv(agent['AgtFDBal']),
+            'fb_balance':   fv(agent['AgtFBBal']),
+            'credit_limit': fv(agent['AgtCreditLimit']),
+            'date_from':    date_from_str,
+            'date_to':      date_to_str,
+            'total_debit':  round(total_debit, 2),
+            'total_credit': round(total_credit, 2),
+            'transactions': transactions,
+        }))
     except Exception as e:
         return add_cors(jsonify({'error': str(e)})), 500
 
