@@ -2443,6 +2443,58 @@ def v2_stats():
         return add_cors(jsonify({'error': str(e)})), 500
 
 
+@app.route('/api/v2/_debug_agent_schema', methods=['GET','OPTIONS'])
+@api_key_required
+def v2_debug_agent_schema():
+    """TEMP: discover WebHMS tables/columns relevant to the agent ledger.
+    Pass ?table=Foo to list columns + a sample row of that table."""
+    if request.method == 'OPTIONS':
+        return add_cors(jsonify({}))
+    try:
+        conn = get_db()
+        cur  = conn.cursor(as_dict=True)
+
+        table = request.args.get('table')
+        if table:
+            cur.execute("""
+                SELECT COLUMN_NAME, DATA_TYPE
+                FROM INFORMATION_SCHEMA.COLUMNS
+                WHERE TABLE_NAME = %s
+                ORDER BY ORDINAL_POSITION
+            """, (table,))
+            cols = [dict(r) for r in cur.fetchall()]
+            sample = []
+            if cols:
+                try:
+                    cur.execute(f"SELECT TOP 1 * FROM [{table}]")
+                    row = cur.fetchone()
+                    if row:
+                        sample = [{k: (str(v) if v is not None else None) for k, v in row.items()}]
+                except Exception as e:
+                    sample = [{'_sample_error': str(e)}]
+            conn.close()
+            return add_cors(jsonify({'table': table, 'columns': cols, 'sample': sample}))
+
+        # No table param → list candidate tables
+        cur.execute("""
+            SELECT TABLE_NAME
+            FROM INFORMATION_SCHEMA.TABLES
+            WHERE TABLE_TYPE = 'BASE TABLE'
+              AND (TABLE_NAME LIKE 'Agt%'
+                OR TABLE_NAME LIKE 'Agent%'
+                OR TABLE_NAME LIKE '%Tran%'
+                OR TABLE_NAME LIKE '%Ledger%'
+                OR TABLE_NAME LIKE 'AC[_]%'
+                OR TABLE_NAME LIKE 'GL%')
+            ORDER BY TABLE_NAME
+        """)
+        tables = [r['TABLE_NAME'] for r in cur.fetchall()]
+        conn.close()
+        return add_cors(jsonify({'candidate_tables': tables}))
+    except Exception as e:
+        return add_cors(jsonify({'error': str(e)})), 500
+
+
 @app.route('/api/v2/agents', methods=['GET','OPTIONS'])
 @api_key_required
 def v2_agents():
