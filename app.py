@@ -2308,6 +2308,157 @@ def v2_account_balance():
         return add_cors(jsonify({'error': str(e)})), 500
 
 
+@app.route('/api/v2/account/statement', methods=['GET','OPTIONS'])
+@api_key_required
+def v2_account_statement():
+    """Line-by-line ledger statement for one chart-of-accounts code.
+
+    Default: 100253 = SANIMA BANK SUITE. Returns opening balance as of
+    date_from, every voucher line in the window with a running balance,
+    and period totals. Asset balance = opening + SUM(DR) - SUM(CR).
+
+    Voucher dates come from two posting paths (same as the P&L endpoint):
+      A) store/inventory module -> Transactions.T_DT   (T_DES = VCH_NO)
+      B) manual journal voucher -> GLTRAN_MAST.VCH_EDATE
+    """
+    if request.method == 'OPTIONS':
+        return add_cors(jsonify({}))
+    try:
+        code      = (request.args.get('code') or '100253').strip()
+        today     = datetime.now()
+        fy_start  = datetime(today.year if today.month >= 7 else today.year - 1, 7, 17)
+        date_from = request.args.get('date_from', fy_start.strftime('%Y-%m-%d'))
+        date_to   = request.args.get('date_to',   today.strftime('%Y-%m-%d'))
+
+        conn = get_db()
+        cur  = conn.cursor(as_dict=True)
+        fv   = lambda v: round(float(v or 0), 2)
+
+        cur.execute("""
+            SELECT GL_CODE, GL_NAME, GL_TYPE,
+                   ISNULL(OP_LC_BAL,0) AS op_bal,
+                   ISNULL(DR_CR,'')    AS op_dr_cr,
+                   OP_EDATE
+            FROM AC_CHART WHERE GL_CODE = %s
+        """, (code,))
+        acc = cur.fetchone()
+        if not acc:
+            conn.close()
+            return add_cors(jsonify({'error': f'Account {code} not found'})), 404
+
+        # Pull every line for this account once, then slice by date in Python —
+        # the account has a few hundred lines, and this gives a true opening balance.
+        cur.execute("""
+            SELECT
+                gtd.VCH_NO,
+                gtd.TRAN_ID,
+                gtd.GL_DR_CR,
+                ISNULL(gtd.GL_LC_AMT,0) AS amt,
+                gtd.[DESC]  AS line_desc,
+                gtd.DOC_NO,
+                gtd.billno,
+                (SELECT MIN(CAST(gtm.VCH_EDATE AS DATE)) FROM GLTRAN_MAST gtm
+                   WHERE gtm.VCH_NO = gtd.VCH_NO) AS mast_date,
+                (SELECT MIN(CAST(t.T_DT AS DATE)) FROM Transactions t
+                   WHERE t.T_DES = gtd.VCH_NO) AS tran_date,
+                (SELECT MAX(gtm.VCH_DESC) FROM GLTRAN_MAST gtm
+                   WHERE gtm.VCH_NO = gtd.VCH_NO) AS vch_desc,
+                (SELECT MAX(gtm.PayTo) FROM GLTRAN_MAST gtm
+                   WHERE gtm.VCH_NO = gtd.VCH_NO) AS pay_to,
+                (SELECT MAX(gtm.ChequeNo) FROM GLTRAN_MAST gtm
+                   WHERE gtm.VCH_NO = gtd.VCH_NO) AS cheque_no,
+                (SELECT TOP 1 ac2.GL_NAME
+                   FROM GLTRAN_DETL g2
+                   JOIN AC_CHART ac2 ON ac2.GL_CODE = g2.GL_CODE
+                  WHERE g2.VCH_NO   = gtd.VCH_NO
+                    AND g2.GL_CODE <> gtd.GL_CODE
+                    AND g2.GL_DR_CR <> gtd.GL_DR_CR
+                  ORDER BY ISNULL(g2.GL_LC_AMT,0) DESC) AS contra_name
+            FROM GLTRAN_DETL gtd
+            WHERE gtd.GL_CODE = %s
+            ORDER BY gtd.TRAN_ID
+        """, (code,))
+        raw = cur.fetchall() or []
+        conn.close()
+
+        op_bal    = fv(acc.get('op_bal'))
+        op_dr_cr  = (acc.get('op_dr_cr') or '').strip().upper()
+        op_signed = -op_bal if op_dr_cr == 'CR' else op_bal
+
+        d_from = datetime.strptime(date_from, '%Y-%m-%d').date()
+        d_to   = datetime.strptime(date_to,   '%Y-%m-%d').date()
+
+        before, window, undated = [], [], []
+        for r in raw:
+            md, td = r.get('mast_date'), r.get('tran_date')
+            d = md or td
+            if hasattr(d, 'date'):
+                d = d.date()
+            r['_d'] = d
+            if d is None:
+                undated.append(r)
+            elif d < d_from:
+                before.append(r)
+            elif d <= d_to:
+                window.append(r)
+
+        def signed(r):
+            a = fv(r['amt'])
+            return a if (r.get('GL_DR_CR') or '').strip().upper() == 'DR' else -a
+
+        opening = round(op_signed + sum(signed(r) for r in before), 2)
+
+        window.sort(key=lambda r: (r['_d'], r['TRAN_ID'] or 0))
+        lines, bal, tot_dr, tot_cr = [], opening, 0.0, 0.0
+        for r in window:
+            drcr = (r.get('GL_DR_CR') or '').strip().upper()
+            amt  = fv(r['amt'])
+            dr   = amt if drcr == 'DR' else 0.0
+            cr   = amt if drcr == 'CR' else 0.0
+            tot_dr += dr
+            tot_cr += cr
+            bal = round(bal + dr - cr, 2)
+            st = lambda v: (v.strip() if isinstance(v, str) else v)
+            lines.append({
+                'date':      str(r['_d']),
+                'vch_no':    st(r.get('VCH_NO')) or '',
+                'tran_id':   r.get('TRAN_ID'),
+                'narration': st(r.get('vch_desc')) or st(r.get('line_desc')) or '',
+                'contra':    st(r.get('contra_name')) or '',
+                'pay_to':    st(r.get('pay_to')) or '',
+                'cheque_no': st(r.get('cheque_no')) or '',
+                'doc_no':    st(r.get('DOC_NO')) or '',
+                'bill_no':   st(r.get('billno')) or '',
+                'deposit':   dr,
+                'withdrawal': cr,
+                'balance':   bal,
+            })
+
+        return add_cors(jsonify({
+            'account': {
+                'code': (acc.get('GL_CODE') or '').strip(),
+                'name': (acc.get('GL_NAME') or '').strip(),
+                'type': (acc.get('GL_TYPE') or '').strip(),
+                'opening_ledger_bal': op_signed,
+                'opening_ledger_date': str(acc.get('OP_EDATE') or '')[:10],
+            },
+            'date_from': date_from,
+            'date_to':   date_to,
+            'opening_balance': opening,
+            'closing_balance': bal,
+            'total_deposits':    round(tot_dr, 2),
+            'total_withdrawals': round(tot_cr, 2),
+            'net_movement':      round(tot_dr - tot_cr, 2),
+            'line_count':        len(lines),
+            'lines_before_window': len(before),
+            'undated_lines':      len(undated),
+            'all_lines_in_account': len(raw),
+            'lines': lines,
+        }))
+    except Exception as e:
+        return add_cors(jsonify({'error': str(e)})), 500
+
+
 @app.route('/api/v2/whatsapp/preview-yesterday', methods=['GET','OPTIONS'])
 @api_key_required
 def v2_whatsapp_preview_yesterday():
