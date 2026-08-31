@@ -2662,6 +2662,59 @@ def v2_cash_receipt():
         return add_cors(jsonify({'error': str(e)})), 500
 
 
+@app.route('/api/v2/cash-trace', methods=['GET','OPTIONS'])
+@api_key_required
+def v2_cash_trace():
+    """Cash actually collected per the operating system (Bills, BillPmode = 1),
+    grouped by month and BillCode. This is the independent counterpart to the
+    CASH GL account (100002) — the front desk's record of what came in, as
+    opposed to what the accountant posted."""
+    if request.method == 'OPTIONS':
+        return add_cors(jsonify({}))
+    try:
+        today     = datetime.now()
+        fy_start  = datetime(today.year if today.month >= 7 else today.year - 1, 7, 17)
+        date_from = request.args.get('date_from', fy_start.strftime('%Y-%m-%d'))
+        date_to   = request.args.get('date_to',   today.strftime('%Y-%m-%d'))
+
+        conn = get_db()
+        cur  = conn.cursor(as_dict=True)
+        cur.execute("""
+            SELECT
+                CONVERT(char(7), BillDt, 126) AS ym,
+                ISNULL(BillCode,'?')          AS code,
+                ISNULL(SUM(BillTot), 0)       AS total,
+                COUNT(*)                      AS n
+            FROM Bills
+            WHERE CAST(BillDt AS DATE) >= %s
+              AND CAST(BillDt AS DATE) <= %s
+              AND (BillVoid IS NULL OR BillVoid = 0)
+              AND BillPmode = 1
+            GROUP BY CONVERT(char(7), BillDt, 126), ISNULL(BillCode,'?')
+            ORDER BY 1, 2
+        """, (date_from, date_to))
+        rows = cur.fetchall() or []
+        conn.close()
+
+        by_month = {}
+        for r in rows:
+            ym   = (r.get('ym') or '').strip()
+            code = (r.get('code') or '?').strip().upper()
+            m    = by_month.setdefault(ym, {'total': 0.0, 'n': 0, 'by_code': {}})
+            amt  = round(float(r.get('total') or 0), 2)
+            m['by_code'][code] = amt
+            m['total'] = round(m['total'] + amt, 2)
+            m['n']    += int(r.get('n') or 0)
+        return add_cors(jsonify({
+            'date_from': date_from,
+            'date_to':   date_to,
+            'grand_total': round(sum(m['total'] for m in by_month.values()), 2),
+            'months': by_month,
+        }))
+    except Exception as e:
+        return add_cors(jsonify({'error': str(e)})), 500
+
+
 @app.route('/api/v2/agents/<int:agent_id>/statement', methods=['GET','OPTIONS'])
 @api_key_required
 def v2_agent_statement(agent_id):
