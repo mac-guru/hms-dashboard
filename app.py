@@ -2366,35 +2366,35 @@ def v2_account_statement():
                 (SELECT MAX(gtm.PayTo) FROM GLTRAN_MAST gtm
                    WHERE gtm.VCH_NO = gtd.VCH_NO) AS pay_to,
                 (SELECT MAX(gtm.ChequeNo) FROM GLTRAN_MAST gtm
-                   WHERE gtm.VCH_NO = gtd.VCH_NO) AS cheque_no,
-                (SELECT TOP 1 ac2.GL_NAME
-                   FROM GLTRAN_DETL g2
-                   JOIN AC_CHART ac2 ON ac2.GL_CODE = g2.GL_CODE
-                  WHERE g2.VCH_NO   = gtd.VCH_NO
-                    AND g2.GL_CODE <> gtd.GL_CODE
-                    AND g2.GL_DR_CR <> gtd.GL_DR_CR
-                  ORDER BY ISNULL(g2.GL_LC_AMT,0) DESC) AS contra_name,
-                -- The contra line's DESC carries the actual party (vendor/staff)
-                -- name; GL_NAME is only the control account (e.g. SUNDRY CREDITORS).
-                (SELECT TOP 1 g2.[DESC]
-                   FROM GLTRAN_DETL g2
-                  WHERE g2.VCH_NO   = gtd.VCH_NO
-                    AND g2.GL_CODE <> gtd.GL_CODE
-                    AND g2.GL_DR_CR <> gtd.GL_DR_CR
-                  ORDER BY ISNULL(g2.GL_LC_AMT,0) DESC) AS contra_desc,
-                (SELECT TOP 1 g2.SUBLEDGER_CODE
-                   FROM GLTRAN_DETL g2
-                  WHERE g2.VCH_NO   = gtd.VCH_NO
-                    AND g2.GL_CODE <> gtd.GL_CODE
-                    AND g2.GL_DR_CR <> gtd.GL_DR_CR
-                  ORDER BY ISNULL(g2.GL_LC_AMT,0) DESC) AS contra_sub,
-                (SELECT COUNT(*) FROM GLTRAN_DETL g3
-                  WHERE g3.VCH_NO = gtd.VCH_NO) AS vch_lines
+                   WHERE gtm.VCH_NO = gtd.VCH_NO) AS cheque_no
             FROM GLTRAN_DETL gtd
             WHERE gtd.GL_CODE = %s
             ORDER BY gtd.TRAN_ID
         """, (code,))
         raw = cur.fetchall() or []
+
+        # Second flat pass for the counterparty. Correlated subqueries per line
+        # time out on this table, so pull every non-bank line of every voucher
+        # that touches this account in one scan and pick the largest
+        # opposite-side line per voucher in Python.
+        cur.execute("""
+            SELECT g2.VCH_NO, g2.GL_DR_CR, ISNULL(g2.GL_LC_AMT,0) AS amt,
+                   g2.[DESC] AS party, ISNULL(g2.SUBLEDGER_CODE,'') AS sub,
+                   ac2.GL_NAME
+            FROM GLTRAN_DETL g2
+            JOIN AC_CHART ac2 ON ac2.GL_CODE = g2.GL_CODE
+            WHERE g2.GL_CODE <> %s
+              AND g2.VCH_NO IN (SELECT VCH_NO FROM GLTRAN_DETL WHERE GL_CODE = %s)
+        """, (code, code))
+        contra = {}
+        nlines = {}
+        for c in (cur.fetchall() or []):
+            v = (c.get('VCH_NO') or '').strip()
+            nlines[v] = nlines.get(v, 0) + 1
+            drcr = (c.get('GL_DR_CR') or '').strip().upper()
+            cur_best = contra.get((v, drcr))
+            if cur_best is None or float(c.get('amt') or 0) > float(cur_best.get('amt') or 0):
+                contra[(v, drcr)] = c
         conn.close()
 
         op_bal    = fv(acc.get('op_bal'))
@@ -2428,6 +2428,9 @@ def v2_account_statement():
         lines, bal, tot_dr, tot_cr = [], opening, 0.0, 0.0
         for r in window:
             drcr = (r.get('GL_DR_CR') or '').strip().upper()
+            # counterparty sits on the opposite side of the same voucher
+            c    = contra.get(((r.get('VCH_NO') or '').strip(),
+                               'CR' if drcr == 'DR' else 'DR'))
             amt  = fv(r['amt'])
             dr   = amt if drcr == 'DR' else 0.0
             cr   = amt if drcr == 'CR' else 0.0
@@ -2440,10 +2443,10 @@ def v2_account_statement():
                 'vch_no':    st(r.get('VCH_NO')) or '',
                 'tran_id':   r.get('TRAN_ID'),
                 'narration': st(r.get('vch_desc')) or st(r.get('line_desc')) or '',
-                'contra':    st(r.get('contra_name')) or '',
-                'party':     st(r.get('contra_desc')) or '',
-                'party_sub': st(r.get('contra_sub')) or '',
-                'vch_lines': r.get('vch_lines'),
+                'contra':    st((c or {}).get('GL_NAME')) or '',
+                'party':     st((c or {}).get('party')) or '',
+                'party_sub': st((c or {}).get('sub')) or '',
+                'vch_lines': nlines.get(st(r.get('VCH_NO')) or '', 0),
                 'pay_to':    st(r.get('pay_to')) or '',
                 'cheque_no': st(r.get('cheque_no')) or '',
                 'doc_no':    st(r.get('DOC_NO')) or '',
