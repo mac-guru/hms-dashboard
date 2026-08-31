@@ -2373,28 +2373,34 @@ def v2_account_statement():
         """, (code,))
         raw = cur.fetchall() or []
 
-        # Second flat pass for the counterparty. Correlated subqueries per line
-        # time out on this table, so pull every non-bank line of every voucher
-        # that touches this account in one scan and pick the largest
-        # opposite-side line per voucher in Python.
-        cur.execute("""
-            SELECT g2.VCH_NO, g2.GL_DR_CR, ISNULL(g2.GL_LC_AMT,0) AS amt,
-                   g2.[DESC] AS party, ISNULL(g2.SUBLEDGER_CODE,'') AS sub,
-                   ac2.GL_NAME
-            FROM GLTRAN_DETL g2
-            JOIN AC_CHART ac2 ON ac2.GL_CODE = g2.GL_CODE
-            WHERE g2.GL_CODE <> %s
-              AND g2.VCH_NO IN (SELECT VCH_NO FROM GLTRAN_DETL WHERE GL_CODE = %s)
-        """, (code, code))
-        contra = {}
-        nlines = {}
-        for c in (cur.fetchall() or []):
-            v = (c.get('VCH_NO') or '').strip()
-            nlines[v] = nlines.get(v, 0) + 1
-            drcr = (c.get('GL_DR_CR') or '').strip().upper()
-            cur_best = contra.get((v, drcr))
-            if cur_best is None or float(c.get('amt') or 0) > float(cur_best.get('amt') or 0):
-                contra[(v, drcr)] = c
+        # Second pass for the counterparty. Correlated subqueries per line and
+        # an IN (SELECT ...) both time out on GLTRAN_DETL, so feed the voucher
+        # numbers we already have back in as explicit literals, in chunks.
+        # Best-effort: if it fails the statement still returns without parties.
+        contra, nlines = {}, {}
+        try:
+            vchs = sorted({(r.get('VCH_NO') or '').strip()
+                           for r in raw if (r.get('VCH_NO') or '').strip()})
+            for i in range(0, len(vchs), 400):
+                chunk = vchs[i:i + 400]
+                ph = ','.join(['%s'] * len(chunk))
+                cur.execute(f"""
+                    SELECT g2.VCH_NO, g2.GL_DR_CR, ISNULL(g2.GL_LC_AMT,0) AS amt,
+                           g2.[DESC] AS party, ISNULL(g2.SUBLEDGER_CODE,'') AS sub,
+                           ac2.GL_NAME
+                    FROM GLTRAN_DETL g2
+                    JOIN AC_CHART ac2 ON ac2.GL_CODE = g2.GL_CODE
+                    WHERE g2.VCH_NO IN ({ph}) AND g2.GL_CODE <> %s
+                """, tuple(chunk) + (code,))
+                for c in (cur.fetchall() or []):
+                    v = (c.get('VCH_NO') or '').strip()
+                    nlines[v] = nlines.get(v, 0) + 1
+                    d2 = (c.get('GL_DR_CR') or '').strip().upper()
+                    prev = contra.get((v, d2))
+                    if prev is None or float(c.get('amt') or 0) > float(prev.get('amt') or 0):
+                        contra[(v, d2)] = c
+        except Exception:
+            contra, nlines = {}, {}
         conn.close()
 
         op_bal    = fv(acc.get('op_bal'))
