@@ -2373,7 +2373,23 @@ def v2_account_statement():
                   WHERE g2.VCH_NO   = gtd.VCH_NO
                     AND g2.GL_CODE <> gtd.GL_CODE
                     AND g2.GL_DR_CR <> gtd.GL_DR_CR
-                  ORDER BY ISNULL(g2.GL_LC_AMT,0) DESC) AS contra_name
+                  ORDER BY ISNULL(g2.GL_LC_AMT,0) DESC) AS contra_name,
+                -- The contra line's DESC carries the actual party (vendor/staff)
+                -- name; GL_NAME is only the control account (e.g. SUNDRY CREDITORS).
+                (SELECT TOP 1 g2.[DESC]
+                   FROM GLTRAN_DETL g2
+                  WHERE g2.VCH_NO   = gtd.VCH_NO
+                    AND g2.GL_CODE <> gtd.GL_CODE
+                    AND g2.GL_DR_CR <> gtd.GL_DR_CR
+                  ORDER BY ISNULL(g2.GL_LC_AMT,0) DESC) AS contra_desc,
+                (SELECT TOP 1 g2.SUBLEDGER_CODE
+                   FROM GLTRAN_DETL g2
+                  WHERE g2.VCH_NO   = gtd.VCH_NO
+                    AND g2.GL_CODE <> gtd.GL_CODE
+                    AND g2.GL_DR_CR <> gtd.GL_DR_CR
+                  ORDER BY ISNULL(g2.GL_LC_AMT,0) DESC) AS contra_sub,
+                (SELECT COUNT(*) FROM GLTRAN_DETL g3
+                  WHERE g3.VCH_NO = gtd.VCH_NO) AS vch_lines
             FROM GLTRAN_DETL gtd
             WHERE gtd.GL_CODE = %s
             ORDER BY gtd.TRAN_ID
@@ -2425,6 +2441,9 @@ def v2_account_statement():
                 'tran_id':   r.get('TRAN_ID'),
                 'narration': st(r.get('vch_desc')) or st(r.get('line_desc')) or '',
                 'contra':    st(r.get('contra_name')) or '',
+                'party':     st(r.get('contra_desc')) or '',
+                'party_sub': st(r.get('contra_sub')) or '',
+                'vch_lines': r.get('vch_lines'),
                 'pay_to':    st(r.get('pay_to')) or '',
                 'cheque_no': st(r.get('cheque_no')) or '',
                 'doc_no':    st(r.get('DOC_NO')) or '',
